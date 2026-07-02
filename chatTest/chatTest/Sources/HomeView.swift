@@ -2,9 +2,9 @@ import InstaChatIOS
 import SwiftUI
 
 struct HomeView: View {
-  @State private var baseURLText = DemoCredentials.baseURL
-  @State private var token = DemoCredentials.token
-  @State private var isShowingChat = false
+  @State private var baseURLText = ProcessInfo.processInfo.environment["INSTACHAT_BASE_URL"] ?? DemoCredentials.baseURL
+  @State private var token = ProcessInfo.processInfo.environment["INSTACHAT_TOKEN"] ?? DemoCredentials.token
+  @State private var isShowingChat = ProcessInfo.processInfo.environment["INSTACHAT_AUTO_OPEN_CHAT"] == "1"
   @State private var validationMessage: String?
 
   var body: some View {

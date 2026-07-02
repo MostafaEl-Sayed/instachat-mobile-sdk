@@ -12,6 +12,13 @@ open chatTest.xcodeproj
 
 Select the `chatTest` scheme and run on an iPhone simulator or device.
 
+For local validation without committing credentials, pass launch environment values:
+
+```sh
+INSTACHAT_TOKEN="<user-jwt>"
+INSTACHAT_AUTO_OPEN_CHAT=1
+```
+
 ## What It Shows
 
 - Native SwiftUI home screen.

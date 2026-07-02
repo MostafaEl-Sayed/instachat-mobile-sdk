@@ -5,7 +5,8 @@ options:
     iOS: "16.0"
 packages:
   InstaChatIOS:
-    path: ../ios-sdk/InstaChatIOS
+    url: https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git
+    from: 0.1.3
 targets:
   chatTest:
     type: application

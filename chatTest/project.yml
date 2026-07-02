@@ -1,0 +1,28 @@
+name: chatTest
+options:
+  bundleIdPrefix: com.instakit
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  InstaChatIOS:
+    path: ../ios-sdk/InstaChatIOS
+targets:
+  chatTest:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: chatTest/Sources
+    resources:
+      - path: chatTest/Resources
+    dependencies:
+      - package: InstaChatIOS
+        product: InstaChatIOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.instakit.chatTest
+        PRODUCT_NAME: chatTest
+        INFOPLIST_FILE: chatTest/Resources/Info.plist
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        DEVELOPMENT_TEAM: ""

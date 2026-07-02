@@ -1,0 +1,5 @@
+{
+  "expo.jsEngine": "hermes",
+  "ios.deploymentTarget": "15.1",
+  "EX_DEV_CLIENT_NETWORK_INSPECTOR": "true"
+}

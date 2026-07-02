@@ -1,0 +1,14 @@
+node_modules/
+example/node_modules/
+.expo/
+dist/
+build/
+coverage/
+.test-build/
+.build/
+ios-sdk/InstaChatIOS/.build/
+.DS_Store
+xcuserdata/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

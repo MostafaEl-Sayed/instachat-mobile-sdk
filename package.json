@@ -1,0 +1,46 @@
+{
+  "name": "react-native-chat-sdk",
+  "version": "0.1.0",
+  "description": "Reusable React Native chat SDK with pluggable providers for chat, media upload, and speech-to-text.",
+  "main": "src/index.ts",
+  "react-native": "src/index.ts",
+  "types": "src/index.ts",
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "smoke": "node scripts/smoke-import.mjs",
+    "test": "rm -rf .test-build && tsc -p tsconfig.test.json && node --test .test-build/tests/*.test.js",
+    "test:integration": "node scripts/instachat-contract-test.mjs"
+  },
+  "keywords": [
+    "react-native",
+    "chat",
+    "sdk",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "peerDependencies": {
+    "react": ">=18.2.0",
+    "react-native": ">=0.73.0",
+    "@shopify/flash-list": ">=1.7.0",
+    "react-native-nitro-modules": ">=0.35.4",
+    "react-native-nitro-sound": ">=0.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "@types/react": "^18.2.79",
+    "react": "18.2.0",
+    "react-native": "0.74.5",
+    "react-native-nitro-modules": "^0.35.4",
+    "react-native-nitro-sound": "^0.2.9",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@shopify/flash-list": "^1.8.3"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "Chat SDK Example",
+    "slug": "chat-sdk-example",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "ios": {
+      "supportsTablet": true,
+      "deploymentTarget": "15.1",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "The chat example records audio so it can transcribe voice input.",
+        "NSPhotoLibraryUsageDescription": "The chat example lets you select images and videos to send.",
+        "NSLocationWhenInUseUsageDescription": "The chat example uses your current location so you can share it in chat."
+      },
+      "bundleIdentifier": "com.anonymous.chat-sdk-example"
+    },
+    "android": {
+      "permissions": [
+        "RECORD_AUDIO",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
+        "READ_EXTERNAL_STORAGE"
+      ]
+    }
+  }
+}

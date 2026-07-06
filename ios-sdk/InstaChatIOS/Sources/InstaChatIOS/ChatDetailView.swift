@@ -14,6 +14,7 @@ struct ChatDetailView: View {
   @State private var isVideoPickerPresented = false
   #if os(iOS)
   @StateObject private var voiceRecorder = VoiceNoteRecorder()
+  @State private var mediaPickerMode: MediaPickerMode?
   #endif
   var room: InstaChatRoom
   var onClose: (() -> Void)?
@@ -53,8 +54,23 @@ struct ChatDetailView: View {
     .onChange(of: selectedVideo) { item in
       handlePickedMedia(item)
     }
+    #if os(iOS)
+    .sheet(item: $mediaPickerMode) { mode in
+      MediaPickerSheet(
+        mode: mode,
+        onPick: { file in
+          mediaPickerMode = nil
+          handlePickedMediaFile(file)
+        },
+        onCancel: {
+          mediaPickerMode = nil
+        }
+      )
+    }
+    #else
     .photosPicker(isPresented: $isPhotoPickerPresented, selection: $selectedPhoto, matching: .images)
     .photosPicker(isPresented: $isVideoPickerPresented, selection: $selectedVideo, matching: .videos)
+    #endif
   }
 
   private var transcript: some View {
@@ -177,17 +193,31 @@ struct ChatDetailView: View {
         AttachmentPanelItem(title: "Location", systemImage: "location.fill")
       }
 
-      Button {
-        isPhotoPickerPresented = true
-      } label: {
-        AttachmentPanelItem(title: "Photo", systemImage: "photo.fill")
-      }
+      #if os(iOS)
+        Button {
+          mediaPickerMode = .photo
+        } label: {
+          AttachmentPanelItem(title: "Photo", systemImage: "photo.fill")
+        }
 
-      Button {
-        isVideoPickerPresented = true
-      } label: {
-        AttachmentPanelItem(title: "Video", systemImage: "video.fill")
-      }
+        Button {
+          mediaPickerMode = .video
+        } label: {
+          AttachmentPanelItem(title: "Video", systemImage: "video.fill")
+        }
+      #else
+        Button {
+          isPhotoPickerPresented = true
+        } label: {
+          AttachmentPanelItem(title: "Photo", systemImage: "photo.fill")
+        }
+
+        Button {
+          isVideoPickerPresented = true
+        } label: {
+          AttachmentPanelItem(title: "Video", systemImage: "video.fill")
+        }
+      #endif
     }
     .padding(8)
     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -293,7 +323,152 @@ struct ChatDetailView: View {
       selectedVideo = nil
     }
   }
+
+  private func handlePickedMediaFile(_ file: PickedMediaFile) {
+    isAttachmentPanelVisible = false
+    Task {
+      await store.sendAttachment(fileURL: file.url, roomID: room.id, contentType: file.contentType)
+    }
+  }
 }
+
+private struct PickedMediaFile {
+  var url: URL
+  var contentType: String?
+}
+
+#if os(iOS)
+private enum MediaPickerMode: String, Identifiable {
+  case photo
+  case video
+
+  var id: String { rawValue }
+
+  var filter: PHPickerFilter {
+    switch self {
+    case .photo:
+      return .images
+    case .video:
+      return .videos
+    }
+  }
+}
+
+private struct MediaPickerSheet: UIViewControllerRepresentable {
+  var mode: MediaPickerMode
+  var onPick: (PickedMediaFile) -> Void
+  var onCancel: () -> Void
+
+  func makeUIViewController(context: Context) -> PHPickerViewController {
+    var configuration = PHPickerConfiguration(photoLibrary: .shared())
+    configuration.filter = mode.filter
+    configuration.selectionLimit = 1
+    let picker = PHPickerViewController(configuration: configuration)
+    picker.delegate = context.coordinator
+    return picker
+  }
+
+  func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
+
+  func makeCoordinator() -> Coordinator {
+    Coordinator(mode: mode, onPick: onPick, onCancel: onCancel)
+  }
+
+  final class Coordinator: NSObject, PHPickerViewControllerDelegate {
+    private let mode: MediaPickerMode
+    private let onPick: (PickedMediaFile) -> Void
+    private let onCancel: () -> Void
+
+    init(mode: MediaPickerMode, onPick: @escaping (PickedMediaFile) -> Void, onCancel: @escaping () -> Void) {
+      self.mode = mode
+      self.onPick = onPick
+      self.onCancel = onCancel
+    }
+
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+      picker.dismiss(animated: true)
+      guard let provider = results.first?.itemProvider else {
+        onCancel()
+        return
+      }
+
+      let fallbackType = mode == .photo ? UTType.image.identifier : UTType.movie.identifier
+      let typeIdentifier = provider.registeredTypeIdentifiers.first { identifier in
+        guard let type = UTType(identifier) else {
+          return false
+        }
+        return mode == .photo ? type.conforms(to: .image) : type.conforms(to: .movie)
+      } ?? fallbackType
+
+      provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { url, error in
+        if let error {
+          DispatchQueue.main.async {
+            self.onCancel()
+            assertionFailure(error.localizedDescription)
+          }
+          return
+        }
+
+        guard let url else {
+          self.loadDataRepresentation(provider: provider, typeIdentifier: typeIdentifier)
+          return
+        }
+
+        do {
+          let copiedURL = try Self.copyTemporaryFile(from: url, typeIdentifier: typeIdentifier)
+          DispatchQueue.main.async {
+            self.onPick(PickedMediaFile(url: copiedURL, contentType: UTType(typeIdentifier)?.preferredMIMEType))
+          }
+        } catch {
+          self.loadDataRepresentation(provider: provider, typeIdentifier: typeIdentifier)
+        }
+      }
+    }
+
+    private func loadDataRepresentation(provider: NSItemProvider, typeIdentifier: String) {
+      provider.loadDataRepresentation(forTypeIdentifier: typeIdentifier) { data, _ in
+        guard let data else {
+          DispatchQueue.main.async {
+            self.onCancel()
+          }
+          return
+        }
+
+        do {
+          let fileURL = try Self.writeTemporaryData(data, typeIdentifier: typeIdentifier)
+          DispatchQueue.main.async {
+            self.onPick(PickedMediaFile(url: fileURL, contentType: UTType(typeIdentifier)?.preferredMIMEType))
+          }
+        } catch {
+          DispatchQueue.main.async {
+            self.onCancel()
+          }
+        }
+      }
+    }
+
+    private static func copyTemporaryFile(from sourceURL: URL, typeIdentifier: String) throws -> URL {
+      let fileExtension = sourceURL.pathExtension.isEmpty ? (UTType(typeIdentifier)?.preferredFilenameExtension ?? "dat") : sourceURL.pathExtension
+      let destinationURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension(fileExtension)
+      if FileManager.default.fileExists(atPath: destinationURL.path) {
+        try FileManager.default.removeItem(at: destinationURL)
+      }
+      try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+      return destinationURL
+    }
+
+    private static func writeTemporaryData(_ data: Data, typeIdentifier: String) throws -> URL {
+      let fileURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension(UTType(typeIdentifier)?.preferredFilenameExtension ?? "dat")
+      try data.write(to: fileURL, options: .atomic)
+      return fileURL
+    }
+  }
+}
+#endif
 
 private struct AttachmentPanelItem: View {
   var title: String

@@ -2,7 +2,7 @@
 
 Small native SwiftUI iOS app for validating the `InstaChatIOS` SDK integration.
 
-The sample project depends on the public Swift Package at `https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git` starting from `v0.1.8`.
+The sample project depends on the public Swift Package at `https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git` starting from `v0.1.9`.
 
 ## Open
 

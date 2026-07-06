@@ -2,6 +2,8 @@
 
 Small native SwiftUI iOS app for validating the `InstaChatIOS` SDK integration.
 
+The sample project depends on the local Swift package at `../ios-sdk/InstaChatIOS`, so cloning this repository and opening `chatTest` validates the exact SDK source in the repo.
+
 ## Open
 
 ```sh
@@ -41,3 +43,9 @@ InstaChatView(
 ```
 
 For production, the native app should inject the authenticated user token from its own login/session flow.
+
+To integrate from GitHub in another native iOS app, add this Swift Package URL in Xcode:
+
+```txt
+https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git
+```

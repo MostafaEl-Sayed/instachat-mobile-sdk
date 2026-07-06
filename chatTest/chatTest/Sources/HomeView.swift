@@ -4,7 +4,8 @@ import SwiftUI
 struct HomeView: View {
   @State private var baseURLText = ProcessInfo.processInfo.environment["INSTACHAT_BASE_URL"] ?? DemoCredentials.baseURL
   @State private var token = ProcessInfo.processInfo.environment["INSTACHAT_TOKEN"] ?? DemoCredentials.token
-  @State private var isShowingChat = ProcessInfo.processInfo.environment["INSTACHAT_AUTO_OPEN_CHAT"] == "1"
+  @State private var isShowingChat = false
+  @State private var shouldAutoOpenChat = ProcessInfo.processInfo.environment["INSTACHAT_AUTO_OPEN_CHAT"] == "1"
   @State private var validationMessage: String?
 
   var body: some View {
@@ -82,6 +83,15 @@ struct HomeView: View {
           ChatScreen(configuration: configuration)
         }
       }
+      .task {
+        guard shouldAutoOpenChat else {
+          return
+        }
+        shouldAutoOpenChat = false
+        if configuration != nil {
+          isShowingChat = true
+        }
+      }
     }
   }
 
@@ -111,20 +121,19 @@ private struct ChatScreen: View {
   let configuration: InstaChatConfiguration
 
   var body: some View {
-    NavigationStack {
+    ZStack(alignment: .topTrailing) {
       InstaChatView(configuration: configuration)
-        .toolbar {
-          ToolbarItem(placement: .topBarTrailing) {
-            Button {
-              dismiss()
-            } label: {
-              Image(systemName: "xmark")
-                .font(.system(size: 13, weight: .semibold))
-            }
-            .buttonStyle(.bordered)
-            .accessibilityLabel("Close chat")
-          }
-        }
+
+      Button {
+        dismiss()
+      } label: {
+        Image(systemName: "xmark")
+          .font(.system(size: 12, weight: .semibold))
+      }
+      .buttonStyle(.bordered)
+      .accessibilityLabel("Close chat")
+      .padding(.top, 40)
+      .padding(.trailing, 18)
     }
   }
 }

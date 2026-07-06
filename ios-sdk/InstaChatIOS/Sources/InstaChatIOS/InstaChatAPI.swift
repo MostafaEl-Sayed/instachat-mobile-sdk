@@ -30,6 +30,7 @@ public final class InstaChatClient: NSObject, URLSessionWebSocketDelegate, @unch
   private let encoder = JSONEncoder()
   private var webSocketTask: URLSessionWebSocketTask?
   private var messageContinuation: AsyncStream<InstaChatRealtimeEvent>.Continuation?
+  private var currentBackendUserID: String?
 
   public init(configuration: InstaChatConfiguration, session: URLSession = .shared) {
     self.configuration = configuration
@@ -40,6 +41,10 @@ public final class InstaChatClient: NSObject, URLSessionWebSocketDelegate, @unch
 
   public func getRooms() async throws -> [InstaChatRoom] {
     let rooms: [BackendRoom] = try await request(path: "/api/v1/me/rooms")
+    currentBackendUserID = rooms
+      .flatMap { $0.members ?? [] }
+      .first { $0.externalUserID == configuration.user.id }?
+      .id
     return rooms.map { $0.toDomain(currentUserID: configuration.user.id) }
   }
 
@@ -58,7 +63,9 @@ public final class InstaChatClient: NSObject, URLSessionWebSocketDelegate, @unch
 
     let page: BackendMessagesPage = try await request(url: url)
     return InstaChatMessagesPage(
-      messages: page.data.map { $0.toDomain(currentUserID: configuration.user.id) }.sorted { $0.createdAt < $1.createdAt },
+      messages: page.data
+        .map { $0.toDomain(currentUserID: configuration.user.id, currentBackendUserID: currentBackendUserID) }
+        .sorted { $0.createdAt < $1.createdAt },
       nextCursor: page.nextCursor,
       hasMore: page.nextCursor != nil
     )
@@ -193,7 +200,7 @@ public final class InstaChatClient: NSObject, URLSessionWebSocketDelegate, @unch
       .split(whereSeparator: \.isNewline)
       .compactMap { $0.data(using: .utf8) }
       .compactMap { try? decoder.decode(RealtimeIncomingEnvelope.self, from: $0) }
-      .compactMap { $0.toDomain(currentUserID: configuration.user.id) }
+      .compactMap { $0.toDomain(currentUserID: configuration.user.id, currentBackendUserID: currentBackendUserID) }
       .forEach { messageContinuation?.yield($0) }
   }
 
@@ -247,14 +254,14 @@ struct RealtimeIncomingEnvelope: Decodable {
   var type: String
   var payload: BackendMessageOrTypingPayload?
 
-  func toDomain(currentUserID: String) -> InstaChatRealtimeEvent? {
+  func toDomain(currentUserID: String, currentBackendUserID: String?) -> InstaChatRealtimeEvent? {
     guard let payload else {
       return nil
     }
 
     switch type {
     case "message.new":
-      return payload.message.map { .message($0.toDomain(currentUserID: currentUserID)) }
+      return payload.message.map { .message($0.toDomain(currentUserID: currentUserID, currentBackendUserID: currentBackendUserID)) }
     case "typing":
       return .typing(roomID: payload.roomID ?? "", userID: payload.userID, isTyping: payload.isTyping ?? false)
     default:
@@ -306,12 +313,16 @@ struct BackendRoom: Decodable {
   var id: String
   var type: String?
   var createdAt: Date?
+  var lastMessage: BackendRoomLastMessage?
+  var unreadCount: Int?
   var members: [BackendRoomMember]?
 
   enum CodingKeys: String, CodingKey {
     case id
     case type
     case createdAt = "created_at"
+    case lastMessage = "last_message"
+    case unreadCount = "unread_count"
     case members
   }
 
@@ -320,9 +331,10 @@ struct BackendRoom: Decodable {
     return InstaChatRoom(
       id: id,
       title: otherMember?.displayName ?? "Chat",
-      subtitle: otherMember?.isOnline == true ? "Online" : nil,
+      subtitle: lastMessage?.summary ?? (otherMember?.isOnline == true ? "Online" : nil),
       avatarURL: otherMember?.avatarURL,
-      updatedAt: createdAt
+      updatedAt: lastMessage?.createdAt ?? createdAt,
+      unreadCount: unreadCount ?? 0
     )
   }
 }
@@ -340,6 +352,44 @@ struct BackendRoomMember: Decodable {
     case displayName = "display_name"
     case avatarURL = "avatar_url"
     case isOnline = "is_online"
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(String.self, forKey: .id)
+    externalUserID = try container.decodeIfPresent(String.self, forKey: .externalUserID)
+    displayName = try container.decode(String.self, forKey: .displayName)
+    avatarURL = container.decodeOptionalURL(forKey: .avatarURL)
+    isOnline = try container.decodeIfPresent(Bool.self, forKey: .isOnline)
+  }
+}
+
+struct BackendRoomLastMessage: Decodable {
+  var id: String
+  var senderID: String?
+  var content: String
+  var type: InstaChatMessageType
+  var createdAt: Date
+
+  enum CodingKeys: String, CodingKey {
+    case id
+    case senderID = "sender_id"
+    case content
+    case type
+    case createdAt = "created_at"
+  }
+
+  var summary: String {
+    switch type {
+    case .text:
+      return content
+    case .image:
+      return "Photo"
+    case .file:
+      return "Attachment"
+    case .location:
+      return "Location"
+    }
   }
 }
 
@@ -372,13 +422,13 @@ struct BackendMessage: Decodable {
     case attachments
   }
 
-  func toDomain(currentUserID _: String) -> InstaChatMessage {
+  func toDomain(currentUserID: String, currentBackendUserID: String? = nil) -> InstaChatMessage {
     let attachment = attachments?.first?.toDomain()
     let location = type == .location ? try? JSONDecoder().decode(InstaChatLocation.self, from: Data(content.utf8)) : nil
     return InstaChatMessage(
       id: id,
       roomID: roomID,
-      senderID: senderID,
+      senderID: senderID == currentBackendUserID ? currentUserID : senderID,
       content: content,
       type: type,
       createdAt: createdAt,
@@ -403,6 +453,19 @@ struct BackendAttachment: Decodable {
     case type
     case fileSize = "file_size"
     case url
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(String.self, forKey: .id)
+    fileName = try container.decode(String.self, forKey: .fileName)
+    contentType = try container.decode(String.self, forKey: .contentType)
+    type = try container.decodeIfPresent(InstaChatAttachmentType.self, forKey: .type)
+    fileSize = try container.decodeIfPresent(Int.self, forKey: .fileSize)
+    guard let decodedURL = container.decodeOptionalURL(forKey: .url) else {
+      throw DecodingError.dataCorruptedError(forKey: .url, in: container, debugDescription: "Attachment URL is missing or invalid.")
+    }
+    url = decodedURL
   }
 
   func toDomain() -> InstaChatAttachment {
@@ -508,5 +571,18 @@ private extension URL {
     let trimmedBase = absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     return URL(string: "\(trimmedBase)/\(trimmedPath)") ?? appendingPathComponent(trimmedPath)
+  }
+}
+
+private extension KeyedDecodingContainer {
+  func decodeOptionalURL(forKey key: Key) -> URL? {
+    guard let rawValue = try? decodeIfPresent(String.self, forKey: key) else {
+      return nil
+    }
+    let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedValue.isEmpty else {
+      return nil
+    }
+    return URL(string: trimmedValue)
   }
 }

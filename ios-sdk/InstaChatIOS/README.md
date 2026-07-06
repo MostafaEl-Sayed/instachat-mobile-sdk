@@ -2,6 +2,8 @@
 
 Native iOS Swift Package for InstaChat.
 
+The SDK owns the full chat UI, including room list, chat detail, close button, photo/video picking, location sharing, real voice-note recording, and voice-note playback.
+
 ## Install
 
 In Xcode:

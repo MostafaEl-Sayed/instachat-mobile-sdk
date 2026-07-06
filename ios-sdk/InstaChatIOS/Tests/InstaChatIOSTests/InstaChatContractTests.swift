@@ -109,6 +109,39 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(MimeTypeResolver.attachmentType(for: "image/png"), .image)
     XCTAssertEqual(MimeTypeResolver.attachmentType(for: "video/mp4"), .video)
     XCTAssertEqual(MimeTypeResolver.attachmentType(for: "audio/mp4"), .audio)
+    XCTAssertEqual(MimeTypeResolver.attachmentType(for: "audio/m4a"), .audio)
     XCTAssertEqual(MimeTypeResolver.attachmentType(for: "application/pdf"), .file)
+  }
+
+  func testAudioAttachmentDecodesFromBackendFileMessage() throws {
+    let json = """
+    {
+      "id": "m-audio",
+      "room_id": "room-1",
+      "sender_id": "user-2",
+      "content": "voice-note.m4a",
+      "type": "file",
+      "created_at": "2026-07-06T14:03:00Z",
+      "attachments": [
+        {
+          "id": "att-audio",
+          "file_name": "voice-note.m4a",
+          "content_type": "audio/mp4",
+          "file_size": 24576,
+          "url": "https://instachat.instakit.pro/uploads/voice-note.m4a"
+        }
+      ]
+    }
+    """.data(using: .utf8)!
+
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601WithFractionalSeconds
+    let backendMessage = try decoder.decode(BackendMessage.self, from: json)
+    let message = backendMessage.toDomain(currentUserID: "user-1")
+
+    XCTAssertEqual(message.type, .file)
+    XCTAssertEqual(message.attachment?.type, .audio)
+    XCTAssertEqual(message.attachment?.contentType, "audio/mp4")
+    XCTAssertEqual(message.attachment?.fileName, "voice-note.m4a")
   }
 }

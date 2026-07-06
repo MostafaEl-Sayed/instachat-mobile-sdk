@@ -132,6 +132,10 @@ final class InstaChatStore: ObservableObject {
     }
   }
 
+  func reportError(_ message: String) {
+    errorMessage = message
+  }
+
   func messages(for roomID: String) -> [InstaChatMessage] {
     messagesByRoom[roomID] ?? []
   }

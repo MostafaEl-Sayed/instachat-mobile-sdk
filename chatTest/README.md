@@ -2,7 +2,7 @@
 
 Small native SwiftUI iOS app for validating the `InstaChatIOS` SDK integration.
 
-The sample project depends on the public Swift Package at `https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git` starting from `v0.1.6`.
+The sample project depends on the public Swift Package at `https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git` starting from `v0.1.7`.
 
 ## Open
 
@@ -26,6 +26,7 @@ INSTACHAT_AUTO_OPEN_CHAT=1
 - Native SwiftUI home screen.
 - Editable `baseURL` and `token`.
 - One-button chat launch.
+- SDK-owned photo, video, location, and real voice-note controls.
 - Direct dependency on the local Swift Package product `InstaChatIOS`.
 
 The integration code is intentionally small:

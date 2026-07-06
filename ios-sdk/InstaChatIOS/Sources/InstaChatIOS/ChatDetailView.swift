@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
+import AVFoundation
 
 struct ChatDetailView: View {
   @EnvironmentObject private var store: InstaChatStore
@@ -8,6 +9,10 @@ struct ChatDetailView: View {
   @State private var didLoad = false
   @State private var selectedPhoto: PhotosPickerItem?
   @State private var selectedVideo: PhotosPickerItem?
+  @State private var isAttachmentPanelVisible = false
+  #if os(iOS)
+  @StateObject private var voiceRecorder = VoiceNoteRecorder()
+  #endif
   var room: InstaChatRoom
   var onClose: (() -> Void)?
 
@@ -81,29 +86,58 @@ struct ChatDetailView: View {
   }
 
   private var composer: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      if isAttachmentPanelVisible {
+        attachmentPanel
+          .transition(.move(edge: .bottom).combined(with: .opacity))
+      }
+
+      #if os(iOS)
+      if voiceRecorder.isRecording {
+        recordingComposer
+      } else {
+        standardComposer
+      }
+      #else
+      standardComposer
+      #endif
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, 10)
+    .background(.regularMaterial)
+    .animation(.easeOut(duration: 0.18), value: isAttachmentPanelVisible)
+  }
+
+  private var standardComposer: some View {
     HStack(spacing: 10) {
-      Menu {
-        Button {
-          Task {
-            await store.sendLocation(InstaChatLocation(latitude: 37.7749, longitude: -122.4194, name: "Shared location"), roomID: room.id)
-          }
-        } label: {
-          Label("Share Location", systemImage: "location")
-        }
-
-        PhotosPicker(selection: $selectedPhoto, matching: .images) {
-          Label("Send Photo", systemImage: "photo")
-        }
-
-        PhotosPicker(selection: $selectedVideo, matching: .videos) {
-          Label("Send Video", systemImage: "video")
-        }
+      Button {
+        isAttachmentPanelVisible.toggle()
       } label: {
         Image(systemName: "plus")
           .font(.system(size: 18, weight: .semibold))
           .frame(width: 38, height: 38)
           .background(Color.gray.opacity(0.14), in: Circle())
       }
+      .accessibilityLabel("Open attachments")
+
+      #if os(iOS)
+      Button {
+        isAttachmentPanelVisible = false
+        Task {
+          do {
+            try await voiceRecorder.start()
+          } catch {
+            store.reportError(error.localizedDescription)
+          }
+        }
+      } label: {
+        Image(systemName: "mic.fill")
+          .font(.system(size: 17, weight: .semibold))
+          .frame(width: 38, height: 38)
+          .background(Color.gray.opacity(0.14), in: Circle())
+      }
+      .accessibilityLabel("Record voice note")
+      #endif
 
       TextField("Message", text: $draft, axis: .vertical)
         .textFieldStyle(.plain)
@@ -116,11 +150,7 @@ struct ChatDetailView: View {
         }
 
       Button {
-        let message = draft
-        draft = ""
-        Task {
-          await store.sendText(message, roomID: room.id)
-        }
+        sendDraft()
       } label: {
         Image(systemName: "arrow.up")
           .font(.system(size: 18, weight: .bold))
@@ -130,9 +160,93 @@ struct ChatDetailView: View {
       }
       .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 10)
-    .background(.regularMaterial)
+  }
+
+  private var attachmentPanel: some View {
+    HStack(spacing: 10) {
+      Button {
+        isAttachmentPanelVisible = false
+        Task {
+          await store.sendLocation(InstaChatLocation(latitude: 37.7749, longitude: -122.4194, name: "Shared location"), roomID: room.id)
+        }
+      } label: {
+        AttachmentPanelItem(title: "Location", systemImage: "location.fill")
+      }
+
+      PhotosPicker(selection: $selectedPhoto, matching: .images) {
+        AttachmentPanelItem(title: "Photo", systemImage: "photo.fill")
+      }
+
+      PhotosPicker(selection: $selectedVideo, matching: .videos) {
+        AttachmentPanelItem(title: "Video", systemImage: "video.fill")
+      }
+    }
+    .padding(8)
+    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+  }
+
+  #if os(iOS)
+  private var recordingComposer: some View {
+    HStack(spacing: 12) {
+      Button {
+        voiceRecorder.cancel()
+      } label: {
+        Image(systemName: "trash")
+          .font(.system(size: 18, weight: .semibold))
+          .foregroundStyle(.secondary)
+          .frame(width: 38, height: 38)
+      }
+      .accessibilityLabel("Cancel voice note")
+
+      HStack(spacing: 10) {
+        Circle()
+          .fill(Color.red)
+          .frame(width: 8, height: 8)
+        Text(Self.voiceNoteDurationFormatter.string(from: voiceRecorder.elapsedSeconds) ?? "0:00")
+          .font(.callout.monospacedDigit())
+          .foregroundStyle(.secondary)
+          .frame(minWidth: 42, alignment: .leading)
+        LiveWaveformView(level: voiceRecorder.level)
+          .frame(height: 28)
+      }
+      .padding(.horizontal, 12)
+      .padding(.vertical, 7)
+      .background(Color.gray.opacity(0.14), in: Capsule())
+
+      Button {
+        do {
+          let voiceNote = try voiceRecorder.finish()
+          Task {
+            await store.sendAttachment(fileURL: voiceNote.url, roomID: room.id, contentType: "audio/mp4")
+          }
+        } catch {
+          store.reportError(error.localizedDescription)
+        }
+      } label: {
+        Image(systemName: "arrow.up")
+          .font(.system(size: 18, weight: .bold))
+          .foregroundStyle(.white)
+          .frame(width: 40, height: 40)
+          .background(Color.accentColor, in: Circle())
+      }
+      .accessibilityLabel("Send voice note")
+    }
+  }
+
+  private static let voiceNoteDurationFormatter: DateComponentsFormatter = {
+    let formatter = DateComponentsFormatter()
+    formatter.allowedUnits = [.minute, .second]
+    formatter.zeroFormattingBehavior = [.pad]
+    return formatter
+  }()
+  #endif
+
+  private func sendDraft() {
+    let message = draft
+    draft = ""
+    Task {
+      await store.sendText(message, roomID: room.id)
+    }
   }
 
   private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
@@ -153,7 +267,9 @@ struct ChatDetailView: View {
 
     Task {
       do {
+        isAttachmentPanelVisible = false
         guard let data = try await item.loadTransferable(type: Data.self) else {
+          store.reportError("The selected media could not be loaded.")
           return
         }
         let contentType = item.supportedContentTypes.first ?? .data
@@ -163,11 +279,25 @@ struct ChatDetailView: View {
         try data.write(to: fileURL, options: .atomic)
         await store.sendAttachment(fileURL: fileURL, roomID: room.id, contentType: contentType.preferredMIMEType)
       } catch {
-        // The store owns visible backend errors. Picker read failures are intentionally ignored here.
+        store.reportError(error.localizedDescription)
       }
       selectedPhoto = nil
       selectedVideo = nil
     }
+  }
+}
+
+private struct AttachmentPanelItem: View {
+  var title: String
+  var systemImage: String
+
+  var body: some View {
+    Label(title, systemImage: systemImage)
+      .font(.footnote.weight(.semibold))
+      .foregroundStyle(.primary)
+      .padding(.horizontal, 11)
+      .padding(.vertical, 9)
+      .background(Color.gray.opacity(0.12), in: Capsule())
   }
 }
 
@@ -219,31 +349,164 @@ private struct AttachmentBubble: View {
   var isCurrentUser: Bool
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
+    Group {
       if attachment.type == .image {
-        AsyncImage(url: attachment.url) { phase in
-          switch phase {
-          case let .success(image):
-            image
-              .resizable()
-              .scaledToFill()
-          default:
-            Rectangle()
-              .fill(Color.gray.opacity(0.18))
-              .overlay {
-                Image(systemName: "photo")
-                  .foregroundStyle(.secondary)
-              }
-          }
-        }
-        .frame(width: 220, height: 150)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        imageBubble
+      } else if attachment.type == .audio {
+        VoiceNoteBubble(attachment: attachment, isCurrentUser: isCurrentUser)
+      } else if attachment.type == .video {
+        fileBubble(systemImage: "play.rectangle.fill", title: attachment.fileName, subtitle: "Video")
       } else {
-        Label(attachment.fileName, systemImage: attachment.type == .video ? "video" : "doc")
-          .font(.subheadline)
+        fileBubble(systemImage: "doc.fill", title: attachment.fileName, subtitle: attachment.contentType)
       }
     }
     .bubbleStyle(isCurrentUser: isCurrentUser)
+  }
+
+  private var imageBubble: some View {
+    AsyncImage(url: attachment.url) { phase in
+      switch phase {
+      case let .success(image):
+        image
+          .resizable()
+          .scaledToFill()
+      default:
+        Rectangle()
+          .fill(Color.gray.opacity(0.18))
+          .overlay {
+            Image(systemName: "photo")
+              .foregroundStyle(.secondary)
+          }
+      }
+    }
+    .frame(width: 220, height: 150)
+    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+  }
+
+  private func fileBubble(systemImage: String, title: String, subtitle: String) -> some View {
+    HStack(spacing: 10) {
+      Image(systemName: systemImage)
+        .font(.system(size: 24))
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title)
+          .font(.subheadline.weight(.semibold))
+          .lineLimit(1)
+        Text(subtitle)
+          .font(.caption)
+          .foregroundStyle(isCurrentUser ? .white.opacity(0.75) : .secondary)
+          .lineLimit(1)
+      }
+    }
+    .frame(maxWidth: 240, alignment: .leading)
+  }
+}
+
+private struct VoiceNoteBubble: View {
+  var attachment: InstaChatAttachment
+  var isCurrentUser: Bool
+
+  @State private var player: AVPlayer?
+  @State private var isPlaying = false
+  @State private var endObserver: NSObjectProtocol?
+
+  var body: some View {
+    HStack(spacing: 10) {
+      Button {
+        togglePlayback()
+      } label: {
+        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+          .font(.system(size: 14, weight: .bold))
+          .foregroundStyle(isCurrentUser ? Color.accentColor : .white)
+          .frame(width: 34, height: 34)
+          .background(isCurrentUser ? .white : Color.accentColor, in: Circle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel(isPlaying ? "Pause voice note" : "Play voice note")
+
+      StaticWaveformView(seed: attachment.id)
+        .frame(width: 150, height: 30)
+        .foregroundStyle(isCurrentUser ? .white.opacity(0.86) : .secondary)
+
+      Image(systemName: "waveform")
+        .font(.system(size: 15, weight: .semibold))
+        .foregroundStyle(isCurrentUser ? .white.opacity(0.75) : .secondary)
+    }
+    .frame(maxWidth: 250, alignment: .leading)
+    .onDisappear {
+      player?.pause()
+      player = nil
+      isPlaying = false
+      removeEndObserver()
+    }
+  }
+
+  private func togglePlayback() {
+    if isPlaying {
+      player?.pause()
+      isPlaying = false
+      return
+    }
+
+    let player = player ?? AVPlayer(url: attachment.url)
+    self.player = player
+    player.play()
+    isPlaying = true
+
+    removeEndObserver()
+    endObserver = NotificationCenter.default.addObserver(
+      forName: .AVPlayerItemDidPlayToEndTime,
+      object: player.currentItem,
+      queue: .main
+    ) { _ in
+      isPlaying = false
+      player.seek(to: .zero)
+    }
+  }
+
+  private func removeEndObserver() {
+    if let endObserver {
+      NotificationCenter.default.removeObserver(endObserver)
+      self.endObserver = nil
+    }
+  }
+}
+
+private struct LiveWaveformView: View {
+  var level: Float
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 3) {
+      ForEach(0..<22, id: \.self) { index in
+        Capsule()
+          .frame(width: 3, height: barHeight(index: index))
+          .opacity(0.55 + Double(level) * 0.35)
+      }
+    }
+    .foregroundStyle(.secondary)
+  }
+
+  private func barHeight(index: Int) -> CGFloat {
+    let phase = CGFloat(index % 7) / 6
+    let baseline = 7 + sin(phase * .pi) * 9
+    return baseline + CGFloat(level) * 20
+  }
+}
+
+private struct StaticWaveformView: View {
+  var seed: String
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 3) {
+      ForEach(0..<28, id: \.self) { index in
+        Capsule()
+          .frame(width: 3, height: barHeight(index: index))
+      }
+    }
+  }
+
+  private func barHeight(index: Int) -> CGFloat {
+    let hash = abs(seed.hashValue + index * 31)
+    return CGFloat(8 + hash % 22)
   }
 }
 

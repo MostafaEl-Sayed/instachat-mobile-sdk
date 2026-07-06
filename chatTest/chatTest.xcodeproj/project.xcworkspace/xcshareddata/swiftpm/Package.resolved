@@ -1,0 +1,15 @@
+{
+  "originHash" : "daa63b23f04521a775a7d723d7d7bec4e3ea8942b7e64c70ae21b67f60b57581",
+  "pins" : [
+    {
+      "identity" : "instachat-mobile-sdk",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git",
+      "state" : {
+        "revision" : "6000aaedff3338278eaef7db471b000b800b5104",
+        "version" : "0.1.5"
+      }
+    }
+  ],
+  "version" : 3
+}

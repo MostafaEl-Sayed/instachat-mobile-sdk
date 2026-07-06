@@ -4,7 +4,7 @@ import SwiftUI
 struct HomeView: View {
   @State private var baseURLText = ProcessInfo.processInfo.environment["INSTACHAT_BASE_URL"] ?? DemoCredentials.baseURL
   @State private var token = ProcessInfo.processInfo.environment["INSTACHAT_TOKEN"] ?? DemoCredentials.token
-  @State private var isShowingChat = false
+  @State private var activeChat: ActiveChatConfiguration?
   @State private var shouldAutoOpenChat = ProcessInfo.processInfo.environment["INSTACHAT_AUTO_OPEN_CHAT"] == "1"
   @State private var validationMessage: String?
 
@@ -78,18 +78,16 @@ struct HomeView: View {
       } message: {
         Text(validationMessage ?? "")
       }
-      .fullScreenCover(isPresented: $isShowingChat) {
-        if let configuration {
-          ChatScreen(configuration: configuration)
-        }
+      .fullScreenCover(item: $activeChat) { activeChat in
+        ChatScreen(configuration: activeChat.configuration)
       }
       .task {
         guard shouldAutoOpenChat else {
           return
         }
         shouldAutoOpenChat = false
-        if configuration != nil {
-          isShowingChat = true
+        if let configuration {
+          activeChat = ActiveChatConfiguration(configuration: configuration)
         }
       }
     }
@@ -108,12 +106,17 @@ struct HomeView: View {
   }
 
   private func openChat() {
-    guard configuration != nil else {
+    guard let configuration else {
       validationMessage = "Enter a valid base URL and token."
       return
     }
-    isShowingChat = true
+    activeChat = ActiveChatConfiguration(configuration: configuration)
   }
+}
+
+private struct ActiveChatConfiguration: Identifiable {
+  let id = UUID()
+  let configuration: InstaChatConfiguration
 }
 
 private struct ChatScreen: View {

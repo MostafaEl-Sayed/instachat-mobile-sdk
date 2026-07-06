@@ -10,6 +10,8 @@ struct ChatDetailView: View {
   @State private var selectedPhoto: PhotosPickerItem?
   @State private var selectedVideo: PhotosPickerItem?
   @State private var isAttachmentPanelVisible = false
+  @State private var isPhotoPickerPresented = false
+  @State private var isVideoPickerPresented = false
   #if os(iOS)
   @StateObject private var voiceRecorder = VoiceNoteRecorder()
   #endif
@@ -51,6 +53,8 @@ struct ChatDetailView: View {
     .onChange(of: selectedVideo) { item in
       handlePickedMedia(item)
     }
+    .photosPicker(isPresented: $isPhotoPickerPresented, selection: $selectedPhoto, matching: .images)
+    .photosPicker(isPresented: $isVideoPickerPresented, selection: $selectedVideo, matching: .videos)
   }
 
   private var transcript: some View {
@@ -173,11 +177,15 @@ struct ChatDetailView: View {
         AttachmentPanelItem(title: "Location", systemImage: "location.fill")
       }
 
-      PhotosPicker(selection: $selectedPhoto, matching: .images) {
+      Button {
+        isPhotoPickerPresented = true
+      } label: {
         AttachmentPanelItem(title: "Photo", systemImage: "photo.fill")
       }
 
-      PhotosPicker(selection: $selectedVideo, matching: .videos) {
+      Button {
+        isVideoPickerPresented = true
+      } label: {
         AttachmentPanelItem(title: "Video", systemImage: "video.fill")
       }
     }

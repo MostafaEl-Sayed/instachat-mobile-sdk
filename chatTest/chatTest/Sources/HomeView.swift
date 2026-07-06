@@ -79,7 +79,9 @@ struct HomeView: View {
         Text(validationMessage ?? "")
       }
       .fullScreenCover(item: $activeChat) { activeChat in
-        ChatScreen(configuration: activeChat.configuration)
+        ChatScreen(configuration: activeChat.configuration) {
+          self.activeChat = nil
+        }
       }
       .task {
         guard shouldAutoOpenChat else {
@@ -120,24 +122,11 @@ private struct ActiveChatConfiguration: Identifiable {
 }
 
 private struct ChatScreen: View {
-  @Environment(\.dismiss) private var dismiss
   let configuration: InstaChatConfiguration
+  var onClose: () -> Void
 
   var body: some View {
-    ZStack(alignment: .topTrailing) {
-      InstaChatView(configuration: configuration)
-
-      Button {
-        dismiss()
-      } label: {
-        Image(systemName: "xmark")
-          .font(.system(size: 12, weight: .semibold))
-      }
-      .buttonStyle(.bordered)
-      .accessibilityLabel("Close chat")
-      .padding(.top, 40)
-      .padding(.trailing, 18)
-    }
+    InstaChatView(configuration: configuration, onClose: onClose)
   }
 }
 

@@ -2,7 +2,7 @@
 
 Small native SwiftUI iOS app for validating the `InstaChatIOS` SDK integration.
 
-The sample project depends on the public Swift Package at `https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git` starting from `v0.1.5`.
+The sample project depends on the public Swift Package at `https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git` starting from `v0.1.6`.
 
 ## Open
 
@@ -38,11 +38,14 @@ InstaChatView(
     baseURL: URL(string: "https://instachat.instakit.pro")!,
     token: token,
     user: InstaChatUser(id: "user-1", name: "Mostafa")
-  )
+  ),
+  onClose: {
+    isShowingChat = false
+  }
 )
 ```
 
-For production, the native app should inject the authenticated user token from its own login/session flow.
+For production, the native app should inject the authenticated user token from its own login/session flow. The host app only controls presentation state; the SDK renders the close button and calls `onClose` when the user taps it.
 
 To integrate from GitHub in another native iOS app, add this Swift Package URL in Xcode:
 

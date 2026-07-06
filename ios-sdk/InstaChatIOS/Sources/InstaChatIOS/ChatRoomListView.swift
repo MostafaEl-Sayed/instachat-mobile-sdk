@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ChatRoomListView: View {
   @EnvironmentObject private var store: InstaChatStore
+  var onClose: (() -> Void)?
 
   var body: some View {
     Group {
@@ -36,8 +37,21 @@ struct ChatRoomListView: View {
       }
     }
     .navigationTitle(store.configuration.title)
+    .toolbar {
+      if let onClose {
+        #if os(iOS)
+        ToolbarItem(placement: .topBarTrailing) {
+          SDKCloseButton(action: onClose)
+        }
+        #else
+        ToolbarItem(placement: .automatic) {
+          SDKCloseButton(action: onClose)
+        }
+        #endif
+      }
+    }
     .navigationDestination(for: InstaChatRoom.self) { room in
-      ChatDetailView(room: room)
+      ChatDetailView(room: room, onClose: onClose)
         .environmentObject(store)
     }
     .alert("Chat Error", isPresented: Binding(get: { store.errorMessage != nil }, set: { _ in })) {
@@ -45,6 +59,19 @@ struct ChatRoomListView: View {
     } message: {
       Text(store.errorMessage ?? "")
     }
+  }
+}
+
+struct SDKCloseButton: View {
+  var action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Image(systemName: "xmark")
+        .font(.system(size: 12, weight: .semibold))
+    }
+    .buttonStyle(.bordered)
+    .accessibilityLabel("Close chat")
   }
 }
 

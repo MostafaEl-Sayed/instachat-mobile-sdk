@@ -4,12 +4,12 @@ import UniformTypeIdentifiers
 
 struct ChatDetailView: View {
   @EnvironmentObject private var store: InstaChatStore
-  @Environment(\.dismiss) private var dismiss
   @State private var draft = ""
   @State private var didLoad = false
   @State private var selectedPhoto: PhotosPickerItem?
   @State private var selectedVideo: PhotosPickerItem?
   var room: InstaChatRoom
+  var onClose: (() -> Void)?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -21,15 +21,17 @@ struct ChatDetailView: View {
     .navigationBarTitleDisplayMode(.inline)
     #endif
     .toolbar {
+      if let onClose {
       #if os(iOS)
-      ToolbarItem(placement: .topBarTrailing) {
-        closeButton
-      }
+        ToolbarItem(placement: .topBarTrailing) {
+          SDKCloseButton(action: onClose)
+        }
       #else
-      ToolbarItem(placement: .automatic) {
-        closeButton
-      }
+        ToolbarItem(placement: .automatic) {
+          SDKCloseButton(action: onClose)
+        }
       #endif
+      }
     }
     .task {
       guard !didLoad else {
@@ -44,17 +46,6 @@ struct ChatDetailView: View {
     .onChange(of: selectedVideo) { item in
       handlePickedMedia(item)
     }
-  }
-
-  private var closeButton: some View {
-        Button {
-          dismiss()
-        } label: {
-          Image(systemName: "xmark")
-            .font(.system(size: 13, weight: .semibold))
-        }
-        .buttonStyle(.bordered)
-        .accessibilityLabel("Close chat")
   }
 
   private var transcript: some View {

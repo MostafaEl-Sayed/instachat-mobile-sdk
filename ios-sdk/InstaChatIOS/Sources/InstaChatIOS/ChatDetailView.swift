@@ -2,6 +2,12 @@ import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
 import AVFoundation
+import AVKit
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 struct ChatDetailView: View {
   @EnvironmentObject private var store: InstaChatStore
@@ -83,7 +89,11 @@ struct ChatDetailView: View {
           }
 
           ForEach(store.messages(for: room.id)) { message in
-            MessageBubbleView(message: message, isCurrentUser: message.senderID == store.configuration.user.id)
+            MessageBubbleView(
+              message: message,
+              isCurrentUser: message.senderID == store.configuration.user.id,
+              mediaAuthToken: store.configuration.token
+            )
               .id(message.id)
           }
 
@@ -487,6 +497,7 @@ private struct AttachmentPanelItem: View {
 private struct MessageBubbleView: View {
   var message: InstaChatMessage
   var isCurrentUser: Bool
+  var mediaAuthToken: String
 
   var body: some View {
     HStack(alignment: .bottom) {
@@ -518,7 +529,7 @@ private struct MessageBubbleView: View {
       LocationBubble(location: message.location, isCurrentUser: isCurrentUser)
     case .image, .file:
       if let attachment = message.attachment {
-        AttachmentBubble(attachment: attachment, isCurrentUser: isCurrentUser)
+        AttachmentBubble(attachment: attachment, isCurrentUser: isCurrentUser, mediaAuthToken: mediaAuthToken)
       } else {
         Text(message.content)
           .bubbleStyle(isCurrentUser: isCurrentUser)
@@ -530,38 +541,43 @@ private struct MessageBubbleView: View {
 private struct AttachmentBubble: View {
   var attachment: InstaChatAttachment
   var isCurrentUser: Bool
+  var mediaAuthToken: String
+
+  @State private var isPreviewPresented = false
 
   var body: some View {
     Group {
       if attachment.type == .image {
-        imageBubble
-      } else if attachment.type == .audio {
-        VoiceNoteBubble(attachment: attachment, isCurrentUser: isCurrentUser)
+        Button {
+          isPreviewPresented = true
+        } label: {
+          imageBubble
+            .bubbleStyle(isCurrentUser: isCurrentUser)
+        }
+        .buttonStyle(.plain)
       } else if attachment.type == .video {
-        fileBubble(systemImage: "play.rectangle.fill", title: attachment.fileName, subtitle: "Video")
+        Button {
+          isPreviewPresented = true
+        } label: {
+          fileBubble(systemImage: "play.rectangle.fill", title: attachment.fileName, subtitle: "Tap to preview")
+            .bubbleStyle(isCurrentUser: isCurrentUser)
+        }
+        .buttonStyle(.plain)
+      } else if attachment.type == .audio {
+        VoiceNoteBubble(attachment: attachment, isCurrentUser: isCurrentUser, mediaAuthToken: mediaAuthToken)
+          .bubbleStyle(isCurrentUser: isCurrentUser)
       } else {
         fileBubble(systemImage: "doc.fill", title: attachment.fileName, subtitle: attachment.contentType)
+          .bubbleStyle(isCurrentUser: isCurrentUser)
       }
     }
-    .bubbleStyle(isCurrentUser: isCurrentUser)
+    .mediaPreviewCover(isPresented: $isPreviewPresented) {
+      MediaPreviewScreen(attachment: attachment, mediaAuthToken: mediaAuthToken)
+    }
   }
 
   private var imageBubble: some View {
-    AsyncImage(url: attachment.url) { phase in
-      switch phase {
-      case let .success(image):
-        image
-          .resizable()
-          .scaledToFill()
-      default:
-        Rectangle()
-          .fill(Color.gray.opacity(0.18))
-          .overlay {
-            Image(systemName: "photo")
-              .foregroundStyle(.secondary)
-          }
-      }
-    }
+    AuthenticatedRemoteImage(url: attachment.url, authToken: mediaAuthToken, contentMode: .fill)
     .frame(width: 220, height: 150)
     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
   }
@@ -587,17 +603,21 @@ private struct AttachmentBubble: View {
 private struct VoiceNoteBubble: View {
   var attachment: InstaChatAttachment
   var isCurrentUser: Bool
+  var mediaAuthToken: String
 
   @State private var player: AVPlayer?
   @State private var isPlaying = false
+  @State private var isLoading = false
+  @State private var playbackError: String?
   @State private var endObserver: NSObjectProtocol?
+  @State private var statusObservation: NSKeyValueObservation?
 
   var body: some View {
     HStack(spacing: 10) {
       Button {
         togglePlayback()
       } label: {
-        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+        Image(systemName: isLoading ? "hourglass" : (isPlaying ? "pause.fill" : "play.fill"))
           .font(.system(size: 14, weight: .bold))
           .foregroundStyle(isCurrentUser ? Color.accentColor : .white)
           .frame(width: 34, height: 34)
@@ -614,11 +634,21 @@ private struct VoiceNoteBubble: View {
         .font(.system(size: 15, weight: .semibold))
         .foregroundStyle(isCurrentUser ? .white.opacity(0.75) : .secondary)
     }
+    .overlay(alignment: .bottomLeading) {
+      if let playbackError {
+        Text(playbackError)
+          .font(.caption2)
+          .foregroundStyle(isCurrentUser ? .white.opacity(0.8) : .secondary)
+          .offset(y: 18)
+      }
+    }
     .frame(maxWidth: 250, alignment: .leading)
     .onDisappear {
       player?.pause()
       player = nil
       isPlaying = false
+      statusObservation?.invalidate()
+      statusObservation = nil
       removeEndObserver()
     }
   }
@@ -630,8 +660,30 @@ private struct VoiceNoteBubble: View {
       return
     }
 
-    let player = player ?? AVPlayer(url: attachment.url)
+    playbackError = nil
+    preparePlaybackSession()
+    let player = player ?? MediaPlayerFactory.player(for: attachment.url, authToken: mediaAuthToken)
     self.player = player
+    isLoading = true
+
+    statusObservation?.invalidate()
+    statusObservation = player.currentItem?.observe(\.status, options: [.initial, .new]) { item, _ in
+      DispatchQueue.main.async {
+        switch item.status {
+        case .readyToPlay:
+          isLoading = false
+        case .failed:
+          isLoading = false
+          isPlaying = false
+          playbackError = item.error?.localizedDescription ?? "Could not play audio"
+        case .unknown:
+          break
+        @unknown default:
+          break
+        }
+      }
+    }
+
     player.play()
     isPlaying = true
 
@@ -646,11 +698,171 @@ private struct VoiceNoteBubble: View {
     }
   }
 
+  private func preparePlaybackSession() {
+    #if os(iOS)
+      do {
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+        try AVAudioSession.sharedInstance().setActive(true)
+      } catch {
+        playbackError = error.localizedDescription
+      }
+    #endif
+  }
+
   private func removeEndObserver() {
     if let endObserver {
       NotificationCenter.default.removeObserver(endObserver)
       self.endObserver = nil
     }
+  }
+}
+
+private struct MediaPreviewScreen: View {
+  var attachment: InstaChatAttachment
+  var mediaAuthToken: String
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    NavigationStack {
+      ZStack {
+        Color.black.ignoresSafeArea()
+        if attachment.type == .image {
+          AuthenticatedRemoteImage(url: attachment.url, authToken: mediaAuthToken, contentMode: .fit)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if attachment.type == .video {
+          VideoPreviewPlayer(url: attachment.url, authToken: mediaAuthToken)
+            .ignoresSafeArea(edges: .bottom)
+        } else {
+          unavailablePreview(title: attachment.fileName, systemImage: "doc")
+        }
+      }
+      .navigationTitle(attachment.fileName)
+      #if os(iOS)
+      .navigationBarTitleDisplayMode(.inline)
+      #endif
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button {
+            dismiss()
+          } label: {
+            Image(systemName: "xmark")
+          }
+          .accessibilityLabel("Close preview")
+        }
+      }
+    }
+  }
+
+  private func unavailablePreview(title: String, systemImage: String) -> some View {
+    VStack(spacing: 12) {
+      Image(systemName: systemImage)
+        .font(.system(size: 42))
+      Text(title)
+        .font(.headline)
+    }
+    .foregroundStyle(.white)
+  }
+}
+
+private struct AuthenticatedRemoteImage: View {
+  var url: URL
+  var authToken: String
+  var contentMode: ContentMode
+
+  @State private var image: PlatformImage?
+  @State private var didFail = false
+
+  var body: some View {
+    Group {
+      if let image {
+        platformImage(image)
+          .resizable()
+          .aspectRatio(contentMode: contentMode)
+      } else if didFail {
+        Rectangle()
+          .fill(Color.gray.opacity(0.18))
+          .overlay {
+            Image(systemName: "photo")
+              .foregroundStyle(.secondary)
+          }
+      } else {
+        Rectangle()
+          .fill(Color.gray.opacity(0.18))
+          .overlay {
+            ProgressView()
+          }
+      }
+    }
+    .clipped()
+    .task(id: url) {
+      await loadImage()
+    }
+  }
+
+  private func loadImage() async {
+    var request = URLRequest(url: url)
+    request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+
+    do {
+      let (data, _) = try await URLSession.shared.data(for: request)
+      guard let loadedImage = PlatformImage(data: data) else {
+        didFail = true
+        return
+      }
+      image = loadedImage
+      didFail = false
+    } catch {
+      didFail = true
+    }
+  }
+
+  private func platformImage(_ image: PlatformImage) -> Image {
+    #if os(iOS)
+      Image(uiImage: image)
+    #elseif os(macOS)
+      Image(nsImage: image)
+    #endif
+  }
+}
+
+#if os(iOS)
+private typealias PlatformImage = UIImage
+#elseif os(macOS)
+private typealias PlatformImage = NSImage
+#endif
+
+private struct VideoPreviewPlayer: View {
+  let url: URL
+  let authToken: String
+  @State private var player: AVPlayer?
+
+  var body: some View {
+    VideoPlayer(player: player)
+      .task {
+        guard player == nil else {
+          return
+        }
+        player = MediaPlayerFactory.player(for: url, authToken: authToken)
+        player?.play()
+      }
+      .onDisappear {
+        player?.pause()
+        player = nil
+      }
+  }
+}
+
+private enum MediaPlayerFactory {
+  static func player(for url: URL, authToken: String) -> AVPlayer {
+    let asset = AVURLAsset(
+      url: url,
+      options: [
+        "AVURLAssetHTTPHeaderFieldsKey": [
+          "Authorization": "Bearer \(authToken)"
+        ]
+      ]
+    )
+    return AVPlayer(playerItem: AVPlayerItem(asset: asset))
   }
 }
 
@@ -696,28 +908,90 @@ private struct StaticWaveformView: View {
 private struct LocationBubble: View {
   var location: InstaChatLocation?
   var isCurrentUser: Bool
+  @Environment(\.openURL) private var openURL
+  @State private var isActionDialogPresented = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      RoundedRectangle(cornerRadius: 14, style: .continuous)
-        .fill(Color.gray.opacity(0.18))
-        .frame(width: 220, height: 110)
-        .overlay {
-          Image(systemName: "mappin.circle.fill")
-            .font(.system(size: 36))
-            .foregroundStyle(.red)
+    Button {
+      isActionDialogPresented = location != nil
+    } label: {
+      VStack(alignment: .leading, spacing: 8) {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+          .fill(Color.gray.opacity(0.18))
+          .frame(width: 220, height: 110)
+          .overlay {
+            Image(systemName: "mappin.circle.fill")
+              .font(.system(size: 36))
+              .foregroundStyle(.red)
+          }
+
+        HStack(spacing: 6) {
+          Text(location?.name ?? "Shared location")
+            .font(.headline)
+          Image(systemName: "arrow.up.right.square")
+            .font(.caption)
+            .foregroundStyle(isCurrentUser ? .white.opacity(0.75) : .secondary)
         }
 
-      Text(location?.name ?? "Shared location")
-        .font(.headline)
-
-      if let location {
-        Text("\(location.latitude, specifier: "%.5f"), \(location.longitude, specifier: "%.5f")")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        if let location {
+          Text("\(location.latitude, specifier: "%.5f"), \(location.longitude, specifier: "%.5f")")
+            .font(.caption)
+            .foregroundStyle(isCurrentUser ? .white.opacity(0.75) : .secondary)
+        }
       }
+      .bubbleStyle(isCurrentUser: isCurrentUser)
     }
-    .bubbleStyle(isCurrentUser: isCurrentUser)
+    .buttonStyle(.plain)
+    .confirmationDialog("Open Location", isPresented: $isActionDialogPresented, titleVisibility: .visible) {
+      if let location {
+        Button("Open in Apple Maps") {
+          if let url = location.appleMapsURL {
+            openURL(url)
+          }
+        }
+
+        Button("Open in Google Maps") {
+          if let url = location.googleMapsURL {
+            openURL(url)
+          }
+        }
+
+        Button("Copy Coordinates") {
+          PlatformPasteboard.copy(location.coordinateText)
+        }
+      }
+
+      Button("Cancel", role: .cancel) {}
+    }
+  }
+}
+
+private extension InstaChatLocation {
+  var coordinateText: String {
+    "\(latitude), \(longitude)"
+  }
+
+  var encodedName: String {
+    (name ?? "Shared location").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "Shared%20location"
+  }
+
+  var appleMapsURL: URL? {
+    URL(string: "http://maps.apple.com/?ll=\(latitude),\(longitude)&q=\(encodedName)")
+  }
+
+  var googleMapsURL: URL? {
+    URL(string: "https://www.google.com/maps/search/?api=1&query=\(latitude),\(longitude)")
+  }
+}
+
+private enum PlatformPasteboard {
+  static func copy(_ text: String) {
+    #if os(iOS)
+      UIPasteboard.general.string = text
+    #elseif os(macOS)
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(text, forType: .string)
+    #endif
   }
 }
 
@@ -736,6 +1010,15 @@ private struct TypingIndicatorView: View {
 }
 
 private extension View {
+  @ViewBuilder
+  func mediaPreviewCover<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {
+    #if os(iOS)
+      fullScreenCover(isPresented: isPresented, content: content)
+    #else
+      sheet(isPresented: isPresented, content: content)
+    #endif
+  }
+
   func bubbleStyle(isCurrentUser: Bool) -> some View {
     padding(.horizontal, 13)
       .padding(.vertical, 9)

@@ -629,8 +629,35 @@ private struct VoiceNoteBubble: View {
     playbackController.isLoading(attachmentID: attachment.id)
   }
 
+  private var isCached: Bool {
+    playbackController.isCached(attachmentID: attachment.id)
+  }
+
   private var playbackError: String? {
     playbackController.error(for: attachment.id)
+  }
+
+  private var playbackIconName: String {
+    if isPlaying {
+      return "pause.fill"
+    }
+    if isCached {
+      return "play.fill"
+    }
+    return "arrow.down.circle.fill"
+  }
+
+  private var playbackAccessibilityLabel: String {
+    if isLoading {
+      return "Downloading voice note"
+    }
+    if isPlaying {
+      return "Pause voice note"
+    }
+    if isCached {
+      return "Play voice note"
+    }
+    return "Download voice note"
   }
 
   var body: some View {
@@ -638,14 +665,22 @@ private struct VoiceNoteBubble: View {
       Button {
         playbackController.toggle(attachment: attachment, authToken: mediaAuthToken)
       } label: {
-        Image(systemName: isLoading ? "hourglass" : (isPlaying ? "pause.fill" : "play.fill"))
-          .font(.system(size: 14, weight: .bold))
-          .foregroundStyle(isCurrentUser ? Color.accentColor : .white)
-          .frame(width: 34, height: 34)
-          .background(isCurrentUser ? .white : Color.accentColor, in: Circle())
+        ZStack {
+          if isLoading {
+            ProgressView()
+              .controlSize(.small)
+              .tint(isCurrentUser ? Color.accentColor : .white)
+          } else {
+            Image(systemName: playbackIconName)
+              .font(.system(size: isCached || isPlaying ? 14 : 17, weight: .bold))
+          }
+        }
+        .foregroundStyle(isCurrentUser ? Color.accentColor : .white)
+        .frame(width: 34, height: 34)
+        .background(isCurrentUser ? .white : Color.accentColor, in: Circle())
       }
       .buttonStyle(.plain)
-      .accessibilityLabel(isPlaying ? "Pause voice note" : "Play voice note")
+      .accessibilityLabel(playbackAccessibilityLabel)
 
       StaticWaveformView(seed: attachment.id)
         .frame(width: 150, height: 30)
@@ -664,6 +699,9 @@ private struct VoiceNoteBubble: View {
       }
     }
     .frame(maxWidth: 250, alignment: .leading)
+    .task(id: attachment.id) {
+      await playbackController.refreshCachedState(attachment: attachment)
+    }
   }
 }
 
@@ -672,6 +710,7 @@ private final class VoiceNotePlaybackController: ObservableObject {
   @Published private var playingAttachmentID: String?
   @Published private var loadingAttachmentID: String?
   @Published private var playbackErrors: [String: String] = [:]
+  @Published private var cachedAttachmentIDs: Set<String> = []
 
   private var player: AVPlayer?
   private var activeAttachmentID: String?
@@ -696,8 +735,26 @@ private final class VoiceNotePlaybackController: ObservableObject {
     loadingAttachmentID == attachmentID
   }
 
+  func isCached(attachmentID: String) -> Bool {
+    cachedAttachmentIDs.contains(attachmentID)
+  }
+
   func error(for attachmentID: String) -> String? {
     playbackErrors[attachmentID]
+  }
+
+  func refreshCachedState(attachment: InstaChatAttachment) async {
+    guard !cachedAttachmentIDs.contains(attachment.id) else {
+      return
+    }
+
+    let isCached = await AuthenticatedMediaCache.shared.cachedFileExists(
+      for: attachment.url,
+      fileName: attachment.fileName
+    )
+    if isCached {
+      cachedAttachmentIDs.insert(attachment.id)
+    }
   }
 
   func toggle(attachment: InstaChatAttachment, authToken: String) {
@@ -720,6 +777,7 @@ private final class VoiceNotePlaybackController: ObservableObject {
           fileName: attachment.fileName
         )
         await MainActor.run {
+          self?.cachedAttachmentIDs.insert(attachment.id)
           self?.startPlayback(from: localURL, attachmentID: attachment.id)
         }
       } catch {
@@ -983,6 +1041,19 @@ private actor AuthenticatedMediaCache {
   static let shared = AuthenticatedMediaCache()
 
   private var inFlight: [URL: Task<URL, Error>] = [:]
+
+  func cachedFileExists(for remoteURL: URL, fileName: String? = nil) async -> Bool {
+    if remoteURL.isFileURL {
+      return true
+    }
+
+    do {
+      let destinationURL = try cacheURL(for: remoteURL, fileName: fileName)
+      return FileManager.default.fileExists(atPath: destinationURL.path)
+    } catch {
+      return false
+    }
+  }
 
   func localFileURL(for remoteURL: URL, authToken: String, fileName: String? = nil) async throws -> URL {
     if remoteURL.isFileURL {

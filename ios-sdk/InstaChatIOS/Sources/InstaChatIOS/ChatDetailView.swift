@@ -662,9 +662,27 @@ private struct VoiceNoteBubble: View {
 
     playbackError = nil
     preparePlaybackSession()
-    let player = player ?? MediaPlayerFactory.player(for: attachment.url, authToken: mediaAuthToken)
-    self.player = player
     isLoading = true
+
+    Task {
+      do {
+        let localURL = try await AuthenticatedMediaCache.shared.localFileURL(
+          for: attachment.url,
+          authToken: mediaAuthToken,
+          fileName: attachment.fileName
+        )
+        startPlayback(from: localURL)
+      } catch {
+        isLoading = false
+        isPlaying = false
+        playbackError = error.localizedDescription
+      }
+    }
+  }
+
+  private func startPlayback(from localURL: URL) {
+    let player = player ?? AVPlayer(url: localURL)
+    self.player = player
 
     statusObservation?.invalidate()
     statusObservation = player.currentItem?.observe(\.status, options: [.initial, .new]) { item, _ in
@@ -835,15 +853,44 @@ private struct VideoPreviewPlayer: View {
   let url: URL
   let authToken: String
   @State private var player: AVPlayer?
+  @State private var isLoading = true
+  @State private var playbackError: String?
 
   var body: some View {
-    VideoPlayer(player: player)
+    ZStack {
+      VideoPlayer(player: player)
+
+      if isLoading {
+        ProgressView()
+          .tint(.white)
+      }
+
+      if let playbackError {
+        VStack(spacing: 10) {
+          Image(systemName: "exclamationmark.triangle")
+            .font(.system(size: 28, weight: .semibold))
+          Text(playbackError)
+            .font(.footnote)
+            .multilineTextAlignment(.center)
+        }
+        .foregroundStyle(.white)
+        .padding(20)
+      }
+    }
       .task {
         guard player == nil else {
           return
         }
-        player = MediaPlayerFactory.player(for: url, authToken: authToken)
-        player?.play()
+        do {
+          let localURL = try await AuthenticatedMediaCache.shared.localFileURL(for: url, authToken: authToken)
+          let player = AVPlayer(url: localURL)
+          self.player = player
+          isLoading = false
+          player.play()
+        } catch {
+          isLoading = false
+          playbackError = error.localizedDescription
+        }
       }
       .onDisappear {
         player?.pause()
@@ -852,17 +899,94 @@ private struct VideoPreviewPlayer: View {
   }
 }
 
-private enum MediaPlayerFactory {
-  static func player(for url: URL, authToken: String) -> AVPlayer {
-    let asset = AVURLAsset(
-      url: url,
-      options: [
-        "AVURLAssetHTTPHeaderFieldsKey": [
-          "Authorization": "Bearer \(authToken)"
-        ]
-      ]
+private actor AuthenticatedMediaCache {
+  static let shared = AuthenticatedMediaCache()
+
+  private var inFlight: [URL: Task<URL, Error>] = [:]
+
+  func localFileURL(for remoteURL: URL, authToken: String, fileName: String? = nil) async throws -> URL {
+    if remoteURL.isFileURL {
+      return remoteURL
+    }
+
+    let destinationURL = try cacheURL(for: remoteURL, fileName: fileName)
+    if FileManager.default.fileExists(atPath: destinationURL.path) {
+      return destinationURL
+    }
+
+    if let task = inFlight[remoteURL] {
+      return try await task.value
+    }
+
+    let task = Task<URL, Error> {
+      var request = URLRequest(url: remoteURL)
+      request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+      let (temporaryURL, response) = try await URLSession.shared.download(for: request)
+
+      if let httpResponse = response as? HTTPURLResponse, !(200..<300).contains(httpResponse.statusCode) {
+        throw MediaDownloadError.httpStatus(httpResponse.statusCode)
+      }
+
+      let parentDirectory = destinationURL.deletingLastPathComponent()
+      try FileManager.default.createDirectory(at: parentDirectory, withIntermediateDirectories: true)
+      if FileManager.default.fileExists(atPath: destinationURL.path) {
+        try FileManager.default.removeItem(at: destinationURL)
+      }
+      try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
+      return destinationURL
+    }
+
+    inFlight[remoteURL] = task
+    do {
+      let localURL = try await task.value
+      inFlight[remoteURL] = nil
+      return localURL
+    } catch {
+      inFlight[remoteURL] = nil
+      throw error
+    }
+  }
+
+  private func cacheURL(for remoteURL: URL, fileName: String?) throws -> URL {
+    let cacheDirectory = try FileManager.default.url(
+      for: .cachesDirectory,
+      in: .userDomainMask,
+      appropriateFor: nil,
+      create: true
     )
-    return AVPlayer(playerItem: AVPlayerItem(asset: asset))
+    .appendingPathComponent("InstaChatMedia", isDirectory: true)
+
+    let extensionFromName = fileName.flatMap { URL(fileURLWithPath: $0).pathExtension.nilIfEmpty }
+    let extensionFromURL = remoteURL.pathExtension.nilIfEmpty
+    let fileExtension = extensionFromName ?? extensionFromURL ?? "bin"
+    return cacheDirectory
+      .appendingPathComponent(remoteURL.absoluteString.base64URLSafeString)
+      .appendingPathExtension(fileExtension)
+  }
+}
+
+private enum MediaDownloadError: LocalizedError {
+  case httpStatus(Int)
+
+  var errorDescription: String? {
+    switch self {
+    case let .httpStatus(statusCode):
+      return "Media download failed (\(statusCode))."
+    }
+  }
+}
+
+private extension String {
+  var nilIfEmpty: String? {
+    isEmpty ? nil : self
+  }
+
+  var base64URLSafeString: String {
+    Data(utf8)
+      .base64EncodedString()
+      .replacingOccurrences(of: "/", with: "_")
+      .replacingOccurrences(of: "+", with: "-")
+      .replacingOccurrences(of: "=", with: "")
   }
 }
 

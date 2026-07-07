@@ -18,6 +18,7 @@ struct ChatDetailView: View {
   @State private var isAttachmentPanelVisible = false
   @State private var isPhotoPickerPresented = false
   @State private var isVideoPickerPresented = false
+  @StateObject private var voicePlaybackController = VoiceNotePlaybackController()
   #if os(iOS)
   @StateObject private var voiceRecorder = VoiceNoteRecorder()
   @State private var mediaPickerMode: MediaPickerMode?
@@ -92,7 +93,8 @@ struct ChatDetailView: View {
             MessageBubbleView(
               message: message,
               isCurrentUser: message.senderID == store.configuration.user.id,
-              mediaAuthToken: store.configuration.token
+              mediaAuthToken: store.configuration.token,
+              voicePlaybackController: voicePlaybackController
             )
               .id(message.id)
           }
@@ -396,7 +398,6 @@ private struct MediaPickerSheet: UIViewControllerRepresentable {
     }
 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-      picker.dismiss(animated: true)
       guard let provider = results.first?.itemProvider else {
         onCancel()
         return
@@ -498,6 +499,7 @@ private struct MessageBubbleView: View {
   var message: InstaChatMessage
   var isCurrentUser: Bool
   var mediaAuthToken: String
+  @ObservedObject var voicePlaybackController: VoiceNotePlaybackController
 
   var body: some View {
     HStack(alignment: .bottom) {
@@ -529,7 +531,12 @@ private struct MessageBubbleView: View {
       LocationBubble(location: message.location, isCurrentUser: isCurrentUser)
     case .image, .file:
       if let attachment = message.attachment {
-        AttachmentBubble(attachment: attachment, isCurrentUser: isCurrentUser, mediaAuthToken: mediaAuthToken)
+        AttachmentBubble(
+          attachment: attachment,
+          isCurrentUser: isCurrentUser,
+          mediaAuthToken: mediaAuthToken,
+          voicePlaybackController: voicePlaybackController
+        )
       } else {
         Text(message.content)
           .bubbleStyle(isCurrentUser: isCurrentUser)
@@ -542,6 +549,7 @@ private struct AttachmentBubble: View {
   var attachment: InstaChatAttachment
   var isCurrentUser: Bool
   var mediaAuthToken: String
+  @ObservedObject var voicePlaybackController: VoiceNotePlaybackController
 
   @State private var isPreviewPresented = false
 
@@ -564,7 +572,12 @@ private struct AttachmentBubble: View {
         }
         .buttonStyle(.plain)
       } else if attachment.type == .audio {
-        VoiceNoteBubble(attachment: attachment, isCurrentUser: isCurrentUser, mediaAuthToken: mediaAuthToken)
+        VoiceNoteBubble(
+          attachment: attachment,
+          isCurrentUser: isCurrentUser,
+          mediaAuthToken: mediaAuthToken,
+          playbackController: voicePlaybackController
+        )
           .bubbleStyle(isCurrentUser: isCurrentUser)
       } else {
         fileBubble(systemImage: "doc.fill", title: attachment.fileName, subtitle: attachment.contentType)
@@ -604,18 +617,24 @@ private struct VoiceNoteBubble: View {
   var attachment: InstaChatAttachment
   var isCurrentUser: Bool
   var mediaAuthToken: String
+  @ObservedObject var playbackController: VoiceNotePlaybackController
 
-  @State private var player: AVPlayer?
-  @State private var isPlaying = false
-  @State private var isLoading = false
-  @State private var playbackError: String?
-  @State private var endObserver: NSObjectProtocol?
-  @State private var statusObservation: NSKeyValueObservation?
+  private var isPlaying: Bool {
+    playbackController.isPlaying(attachmentID: attachment.id)
+  }
+
+  private var isLoading: Bool {
+    playbackController.isLoading(attachmentID: attachment.id)
+  }
+
+  private var playbackError: String? {
+    playbackController.error(for: attachment.id)
+  }
 
   var body: some View {
     HStack(spacing: 10) {
       Button {
-        togglePlayback()
+        playbackController.toggle(attachment: attachment, authToken: mediaAuthToken)
       } label: {
         Image(systemName: isLoading ? "hourglass" : (isPlaying ? "pause.fill" : "play.fill"))
           .font(.system(size: 14, weight: .bold))
@@ -643,45 +662,91 @@ private struct VoiceNoteBubble: View {
       }
     }
     .frame(maxWidth: 250, alignment: .leading)
-    .onDisappear {
-      player?.pause()
-      player = nil
-      isPlaying = false
-      statusObservation?.invalidate()
-      statusObservation = nil
-      removeEndObserver()
+  }
+}
+
+@MainActor
+private final class VoiceNotePlaybackController: ObservableObject {
+  @Published private var playingAttachmentID: String?
+  @Published private var loadingAttachmentID: String?
+  @Published private var playbackErrors: [String: String] = [:]
+
+  private var player: AVPlayer?
+  private var activeAttachmentID: String?
+  private var endObserver: NSObjectProtocol?
+  private var statusObservation: NSKeyValueObservation?
+  private var playbackTask: Task<Void, Never>?
+
+  deinit {
+    playbackTask?.cancel()
+    player?.pause()
+    statusObservation?.invalidate()
+    if let endObserver {
+      NotificationCenter.default.removeObserver(endObserver)
     }
   }
 
-  private func togglePlayback() {
-    if isPlaying {
-      player?.pause()
-      isPlaying = false
+  func isPlaying(attachmentID: String) -> Bool {
+    playingAttachmentID == attachmentID
+  }
+
+  func isLoading(attachmentID: String) -> Bool {
+    loadingAttachmentID == attachmentID
+  }
+
+  func error(for attachmentID: String) -> String? {
+    playbackErrors[attachmentID]
+  }
+
+  func toggle(attachment: InstaChatAttachment, authToken: String) {
+    if activeAttachmentID == attachment.id {
+      stop()
       return
     }
 
-    playbackError = nil
-    preparePlaybackSession()
-    isLoading = true
+    stop()
+    activeAttachmentID = attachment.id
+    loadingAttachmentID = attachment.id
+    playbackErrors[attachment.id] = nil
+    preparePlaybackSession(for: attachment.id)
 
-    Task {
+    playbackTask = Task { [weak self] in
       do {
         let localURL = try await AuthenticatedMediaCache.shared.localFileURL(
           for: attachment.url,
-          authToken: mediaAuthToken,
+          authToken: authToken,
           fileName: attachment.fileName
         )
-        startPlayback(from: localURL)
+        await MainActor.run {
+          self?.startPlayback(from: localURL, attachmentID: attachment.id)
+        }
       } catch {
-        isLoading = false
-        isPlaying = false
-        playbackError = error.localizedDescription
+        await MainActor.run {
+          self?.fail(attachmentID: attachment.id, error: error)
+        }
       }
     }
   }
 
-  private func startPlayback(from localURL: URL) {
-    let player = player ?? AVPlayer(url: localURL)
+  func stop() {
+    playbackTask?.cancel()
+    playbackTask = nil
+    player?.pause()
+    player = nil
+    activeAttachmentID = nil
+    playingAttachmentID = nil
+    loadingAttachmentID = nil
+    statusObservation?.invalidate()
+    statusObservation = nil
+    removeEndObserver()
+  }
+
+  private func startPlayback(from localURL: URL, attachmentID: String) {
+    guard activeAttachmentID == attachmentID else {
+      return
+    }
+
+    let player = AVPlayer(url: localURL)
     self.player = player
 
     statusObservation?.invalidate()
@@ -689,11 +754,9 @@ private struct VoiceNoteBubble: View {
       DispatchQueue.main.async {
         switch item.status {
         case .readyToPlay:
-          isLoading = false
+          self.loadingAttachmentID = nil
         case .failed:
-          isLoading = false
-          isPlaying = false
-          playbackError = item.error?.localizedDescription ?? "Could not play audio"
+          self.fail(attachmentID: attachmentID, message: item.error?.localizedDescription ?? "Could not play audio")
         case .unknown:
           break
         @unknown default:
@@ -703,7 +766,7 @@ private struct VoiceNoteBubble: View {
     }
 
     player.play()
-    isPlaying = true
+    playingAttachmentID = attachmentID
 
     removeEndObserver()
     endObserver = NotificationCenter.default.addObserver(
@@ -711,20 +774,35 @@ private struct VoiceNoteBubble: View {
       object: player.currentItem,
       queue: .main
     ) { _ in
-      isPlaying = false
-      player.seek(to: .zero)
+      Task { @MainActor [weak self] in
+        guard self?.activeAttachmentID == attachmentID else {
+          return
+        }
+        self?.stop()
+      }
     }
   }
 
-  private func preparePlaybackSession() {
+  private func preparePlaybackSession(for attachmentID: String) {
     #if os(iOS)
       do {
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
         try AVAudioSession.sharedInstance().setActive(true)
       } catch {
-        playbackError = error.localizedDescription
+        playbackErrors[attachmentID] = error.localizedDescription
       }
     #endif
+  }
+
+  private func fail(attachmentID: String, error: Error) {
+    fail(attachmentID: attachmentID, message: error.localizedDescription)
+  }
+
+  private func fail(attachmentID: String, message: String) {
+    if activeAttachmentID == attachmentID {
+      stop()
+    }
+    playbackErrors[attachmentID] = message
   }
 
   private func removeEndObserver() {

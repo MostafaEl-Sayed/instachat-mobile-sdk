@@ -258,9 +258,11 @@ struct ChatDetailView: View {
           .frame(minWidth: 42, alignment: .leading)
         LiveWaveformView(level: voiceRecorder.level)
           .frame(height: 28)
+          .frame(maxWidth: .infinity, alignment: .leading)
       }
       .padding(.horizontal, 12)
       .padding(.vertical, 7)
+      .frame(maxWidth: .infinity, alignment: .leading)
       .background(Color.gray.opacity(0.14), in: Capsule())
 
       Button {

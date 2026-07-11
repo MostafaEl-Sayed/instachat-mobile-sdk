@@ -10,10 +10,12 @@ In Xcode:
 
 1. Open your iOS app project.
 2. Select **File > Add Package Dependencies**.
-3. Enter the private GitHub package URL.
+3. Enter the GitHub package URL.
 4. Add `InstaChatIOS` to your app target.
 
 ## SwiftUI Usage
+
+Initialize the SDK once with the authenticated token, then present either the chat list or a specific room.
 
 ```swift
 import InstaChatIOS
@@ -21,31 +23,44 @@ import SwiftUI
 
 struct SupportChatScreen: View {
   let token: String
+  private let baseURL = URL(string: "https://instachat.instakit.pro")!
 
   var body: some View {
-    InstaChatView(
-      configuration: InstaChatConfiguration(
-        baseURL: URL(string: "https://instachat.instakit.pro")!,
-        token: token,
-        user: InstaChatUser(id: "user-1", name: "Mostafa")
-      )
+    let sdk = InstaChat.initialize(
+      baseURL: baseURL,
+      token: token,
+      user: InstaChatUser(id: "user-1", name: "Mostafa")
     )
+
+    sdk.chatListView()
   }
 }
 ```
+
+Open a specific room directly:
+
+```swift
+sdk.chatView(roomID: "room-id", title: "Support")
+```
+
+`InstaChatView(configuration:)` still works for existing consumers, but it is now a legacy compatibility entry point. Prefer `InstaChat.initialize(...)`; the direct configuration view initializer will be formally deprecated in a future release.
 
 ## UIKit Usage
 
 ```swift
 import InstaChatIOS
 
-InstaChat.present(
-  from: viewController,
+let sdk = InstaChat.initialize(
   baseURL: URL(string: "https://instachat.instakit.pro")!,
   token: token,
   user: InstaChatUser(id: "user-1", name: "Mostafa")
 )
+
+sdk.presentChatList(from: viewController)
+sdk.presentChat(from: viewController, roomID: "room-id", title: "Support")
 ```
+
+The older `InstaChat.present(from:baseURL:token:user:roomID:)` helper still works, but it is a legacy compatibility API and will be deprecated in a future release.
 
 ## Permissions
 

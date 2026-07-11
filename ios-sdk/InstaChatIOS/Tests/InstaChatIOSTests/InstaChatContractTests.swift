@@ -2,6 +2,21 @@ import XCTest
 @testable import InstaChatIOS
 
 final class InstaChatContractTests: XCTestCase {
+  func testConfigurationCanOpenSpecificRoomFromInitializedSDK() {
+    let sdk = InstaChat.initialize(
+      baseURL: URL(string: "https://instachat.instakit.pro")!,
+      token: "token",
+      user: InstaChatUser(id: "user-1", name: "Mostafa")
+    )
+
+    let roomConfiguration = sdk.configuration.openingRoom(id: "room-1", title: "Support")
+
+    XCTAssertEqual(sdk.configuration.roomID, nil)
+    XCTAssertEqual(roomConfiguration.roomID, "room-1")
+    XCTAssertEqual(roomConfiguration.initialRoom?.id, "room-1")
+    XCTAssertEqual(roomConfiguration.initialRoom?.title, "Support")
+  }
+
   func testRoomListDecodesLiveBackendShapeWithEmptyAvatarURL() throws {
     let json = """
     {

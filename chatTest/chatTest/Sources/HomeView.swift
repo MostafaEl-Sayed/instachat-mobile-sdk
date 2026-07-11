@@ -4,7 +4,9 @@ import SwiftUI
 struct HomeView: View {
   @State private var baseURLText = ProcessInfo.processInfo.environment["INSTACHAT_BASE_URL"] ?? DemoCredentials.baseURL
   @State private var token = ProcessInfo.processInfo.environment["INSTACHAT_TOKEN"] ?? DemoCredentials.token
-  @State private var activeChat: ActiveChatConfiguration?
+  @State private var roomIDText = ProcessInfo.processInfo.environment["INSTACHAT_ROOM_ID"] ?? ""
+  @State private var initializedSDK: InstaChatSDK?
+  @State private var activeChat: ActiveChatPresentation?
   @State private var shouldAutoOpenChat = ProcessInfo.processInfo.environment["INSTACHAT_AUTO_OPEN_CHAT"] == "1"
   @State private var validationMessage: String?
 
@@ -40,11 +42,27 @@ struct HomeView: View {
 
         Section {
           Button {
-            openChat()
+            initializeSDK()
           } label: {
             HStack {
-              Image(systemName: "message.fill")
-              Text("Open Chat")
+              Image(systemName: initializedSDK == nil ? "checkmark.seal" : "checkmark.seal.fill")
+              Text(initializedSDK == nil ? "Initialize SDK" : "SDK Initialized")
+              Spacer()
+            }
+            .font(.headline)
+            .padding(.vertical, 4)
+          }
+        } footer: {
+          Text("Initialize the SDK once with the authenticated token, then open either the chat list or a specific chat.")
+        }
+
+        Section {
+          Button {
+            openChatList()
+          } label: {
+            HStack {
+              Image(systemName: "list.bullet")
+              Text("Open Chat List")
               Spacer()
               Image(systemName: "arrow.up.right")
                 .foregroundStyle(.secondary)
@@ -52,19 +70,42 @@ struct HomeView: View {
             .font(.headline)
             .padding(.vertical, 4)
           }
+          .disabled(initializedSDK == nil)
+
+          TextField("Specific room ID", text: $roomIDText)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+
+          Button {
+            openSpecificChat()
+          } label: {
+            HStack {
+              Image(systemName: "message.fill")
+              Text("Open Specific Chat")
+              Spacer()
+              Image(systemName: "arrow.up.right")
+                .foregroundStyle(.secondary)
+            }
+            .font(.headline)
+            .padding(.vertical, 4)
+          }
+          .disabled(initializedSDK == nil || roomIDText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } header: {
+          Text("Presentation")
         }
 
         Section {
           Text("""
           import InstaChatIOS
 
-          InstaChatView(
-            configuration: InstaChatConfiguration(
-              baseURL: URL(string: baseURL)!,
-              token: token,
-              user: InstaChatUser(id: "user-1", name: "Mostafa")
-            )
+          let sdk = InstaChat.initialize(
+            baseURL: URL(string: baseURL)!,
+            token: token,
+            user: InstaChatUser(id: "user-1", name: "Mostafa")
           )
+
+          sdk.chatListView()
+          sdk.chatView(roomID: "room-id", title: "Support")
           """)
           .font(.system(.footnote, design: .monospaced))
           .textSelection(.enabled)
@@ -79,7 +120,7 @@ struct HomeView: View {
         Text(validationMessage ?? "")
       }
       .fullScreenCover(item: $activeChat) { activeChat in
-        ChatScreen(configuration: activeChat.configuration) {
+        ChatScreen(presentation: activeChat) {
           self.activeChat = nil
         }
       }
@@ -88,45 +129,82 @@ struct HomeView: View {
           return
         }
         shouldAutoOpenChat = false
-        if let configuration {
-          activeChat = ActiveChatConfiguration(configuration: configuration)
+        if let sdk = makeSDK() {
+          initializedSDK = sdk
+          activeChat = ActiveChatPresentation(sdk: sdk, mode: .list)
         }
       }
     }
   }
 
-  private var configuration: InstaChatConfiguration? {
+  private func makeSDK() -> InstaChatSDK? {
     guard let baseURL = URL(string: baseURLText), !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       return nil
     }
 
-    return InstaChatConfiguration(
+    return InstaChat.initialize(
       baseURL: baseURL,
       token: token.trimmingCharacters(in: .whitespacesAndNewlines),
       user: InstaChatUser(id: DemoCredentials.userID, name: DemoCredentials.userName)
     )
   }
 
-  private func openChat() {
-    guard let configuration else {
+  private func initializeSDK() {
+    guard let sdk = makeSDK() else {
       validationMessage = "Enter a valid base URL and token."
       return
     }
-    activeChat = ActiveChatConfiguration(configuration: configuration)
+
+    initializedSDK = sdk
+  }
+
+  private func openChatList() {
+    guard let initializedSDK else {
+      validationMessage = "Initialize the SDK first."
+      return
+    }
+
+    activeChat = ActiveChatPresentation(sdk: initializedSDK, mode: .list)
+  }
+
+  private func openSpecificChat() {
+    guard let initializedSDK else {
+      validationMessage = "Initialize the SDK first."
+      return
+    }
+
+    let roomID = roomIDText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !roomID.isEmpty else {
+      validationMessage = "Enter a room ID."
+      return
+    }
+
+    activeChat = ActiveChatPresentation(sdk: initializedSDK, mode: .room(id: roomID, title: "Chat"))
   }
 }
 
-private struct ActiveChatConfiguration: Identifiable {
+private struct ActiveChatPresentation: Identifiable {
   let id = UUID()
-  let configuration: InstaChatConfiguration
+  let sdk: InstaChatSDK
+  let mode: ChatPresentationMode
+}
+
+private enum ChatPresentationMode {
+  case list
+  case room(id: String, title: String)
 }
 
 private struct ChatScreen: View {
-  let configuration: InstaChatConfiguration
+  let presentation: ActiveChatPresentation
   var onClose: () -> Void
 
   var body: some View {
-    InstaChatView(configuration: configuration, onClose: onClose)
+    switch presentation.mode {
+    case .list:
+      presentation.sdk.chatListView(onClose: onClose)
+    case let .room(id, title):
+      presentation.sdk.chatView(roomID: id, title: title, onClose: onClose)
+    }
   }
 }
 

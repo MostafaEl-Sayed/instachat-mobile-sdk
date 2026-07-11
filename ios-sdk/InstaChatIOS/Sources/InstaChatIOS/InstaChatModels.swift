@@ -5,6 +5,7 @@ public struct InstaChatConfiguration: Sendable {
   public var token: String
   public var user: InstaChatUser
   public var roomID: String?
+  public var roomTitle: String?
   public var historyLimit: Int
   public var title: String
 
@@ -13,6 +14,7 @@ public struct InstaChatConfiguration: Sendable {
     token: String,
     user: InstaChatUser,
     roomID: String? = nil,
+    roomTitle: String? = nil,
     historyLimit: Int = 25,
     title: String = "Messages"
   ) {
@@ -20,8 +22,29 @@ public struct InstaChatConfiguration: Sendable {
     self.token = token
     self.user = user
     self.roomID = roomID
+    self.roomTitle = roomTitle
     self.historyLimit = historyLimit
     self.title = title
+  }
+
+  public func openingRoom(id roomID: String, title roomTitle: String? = nil) -> InstaChatConfiguration {
+    InstaChatConfiguration(
+      baseURL: baseURL,
+      token: token,
+      user: user,
+      roomID: roomID,
+      roomTitle: roomTitle,
+      historyLimit: historyLimit,
+      title: title
+    )
+  }
+
+  var initialRoom: InstaChatRoom? {
+    guard let roomID else {
+      return nil
+    }
+
+    return InstaChatRoom(id: roomID, title: roomTitle ?? "Chat")
   }
 }
 

@@ -9,7 +9,7 @@ Native iOS apps should use the Swift Package product `InstaChatIOS`. This is the
 In Xcode:
 
 1. Select **File > Add Package Dependencies**.
-2. Paste the private GitHub repo URL.
+2. Paste the GitHub repo URL.
 3. Add the `InstaChatIOS` product to your iOS app target.
 
 There is also a minimal native SwiftUI sample app in `chatTest/`. It is intentionally small for native iOS teams:
@@ -20,20 +20,21 @@ xcodegen generate
 open chatTest.xcodeproj
 ```
 
-Run the `chatTest` scheme, then tap **Open Chat**.
+Run the `chatTest` scheme, initialize the SDK, then open either the chat list or a specific room.
 
 SwiftUI:
 
 ```swift
 import InstaChatIOS
 
-InstaChatView(
-  configuration: InstaChatConfiguration(
-    baseURL: URL(string: "https://instachat.instakit.pro")!,
-    token: token,
-    user: InstaChatUser(id: "user-1", name: "Mostafa")
-  )
+let sdk = InstaChat.initialize(
+  baseURL: URL(string: "https://instachat.instakit.pro")!,
+  token: token,
+  user: InstaChatUser(id: "user-1", name: "Mostafa")
 )
+
+sdk.chatListView()
+sdk.chatView(roomID: "room-id", title: "Support")
 ```
 
 UIKit:
@@ -41,13 +42,17 @@ UIKit:
 ```swift
 import InstaChatIOS
 
-InstaChat.present(
-  from: viewController,
+let sdk = InstaChat.initialize(
   baseURL: URL(string: "https://instachat.instakit.pro")!,
   token: token,
   user: InstaChatUser(id: "user-1", name: "Mostafa")
 )
+
+sdk.presentChatList(from: viewController)
+sdk.presentChat(from: viewController, roomID: "room-id", title: "Support")
 ```
+
+Existing `InstaChatView(configuration:)` and `InstaChat.present(from:baseURL:token:user:roomID:)` integrations still work. They are legacy compatibility entry points now; new consumers should initialize with `InstaChat.initialize(...)` because those older entry points will be deprecated in a future release.
 
 The React Native package remains available for React Native host apps. Android should get a separate native Kotlin/Compose package next; embedding React Native inside a native Android app is possible but is not the recommended simple SDK experience.
 

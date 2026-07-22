@@ -3,6 +3,9 @@ import PhotosUI
 import UniformTypeIdentifiers
 import AVFoundation
 import AVKit
+#if canImport(CoreLocation)
+import CoreLocation
+#endif
 #if os(iOS)
 import UIKit
 #elseif os(macOS)
@@ -19,6 +22,9 @@ struct ChatDetailView: View {
   @State private var isPhotoPickerPresented = false
   @State private var isVideoPickerPresented = false
   @StateObject private var voicePlaybackController = VoiceNotePlaybackController()
+  #if canImport(CoreLocation)
+  @StateObject private var currentLocationProvider = CurrentLocationProvider()
+  #endif
   #if os(iOS)
   @StateObject private var voiceRecorder = VoiceNoteRecorder()
   @State private var mediaPickerMode: MediaPickerMode?
@@ -199,7 +205,7 @@ struct ChatDetailView: View {
       Button {
         isAttachmentPanelVisible = false
         Task {
-          await store.sendLocation(InstaChatLocation(latitude: 37.7749, longitude: -122.4194, name: "Shared location"), roomID: room.id)
+          await sendCurrentLocation()
         }
       } label: {
         AttachmentPanelItem(title: "Location", systemImage: "location.fill")
@@ -299,6 +305,19 @@ struct ChatDetailView: View {
     Task {
       await store.sendText(message, roomID: room.id)
     }
+  }
+
+  private func sendCurrentLocation() async {
+    #if canImport(CoreLocation)
+    do {
+      let location = try await currentLocationProvider.currentLocation()
+      await store.sendLocation(location, roomID: room.id)
+    } catch {
+      store.reportError(error.localizedDescription)
+    }
+    #else
+    store.reportError("Location sharing is not available on this platform.")
+    #endif
   }
 
   private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {

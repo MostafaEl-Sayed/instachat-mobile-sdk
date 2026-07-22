@@ -80,7 +80,7 @@ export function SupportChat() {
 }
 ```
 
-Add native permissions for microphone, photos/media, and location in your host app. Media picking and location are adapter-based, so production apps can use their existing native picker/location implementation.
+Add native permissions for microphone, photos/media, and location in your host app. The native iOS SDK owns photo/video picking, current-location lookup, voice-note recording, and sending. Location sharing requests `When In Use` permission, reads the current device coordinate, reverse-geocodes a display name when available, and sends the backend `location` payload.
 
 Media rules in the native iOS SDK:
 

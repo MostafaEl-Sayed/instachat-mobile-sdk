@@ -75,6 +75,8 @@ Add the permissions your host app enables:
 <string>Record voice notes for chat.</string>
 ```
 
+Location sharing is handled inside the SDK. When the user taps Location, the SDK requests `When In Use` permission if needed, reads the current device coordinate, reverse-geocodes a readable name when available, and sends the backend `location` message payload.
+
 ## Media Limits
 
 - Users can select and send up to 5 images at once.

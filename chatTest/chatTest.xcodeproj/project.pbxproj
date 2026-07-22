@@ -313,7 +313,7 @@
 			repositoryURL = "https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 0.1.15;
+				minimumVersion = 0.1.16;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

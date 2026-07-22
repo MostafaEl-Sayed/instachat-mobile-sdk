@@ -82,6 +82,13 @@ export function SupportChat() {
 
 Add native permissions for microphone, photos/media, and location in your host app. Media picking and location are adapter-based, so production apps can use their existing native picker/location implementation.
 
+Media rules in the native iOS SDK:
+
+- Photo picker allows up to 5 images in one selection and sends them as separate image messages.
+- Video picker allows one video per send.
+- Videos must be 60 seconds or shorter.
+- Large valid videos are compressed before upload when possible; videos over the SDK upload guard are rejected before the backend request.
+
 ## With Host Adapters
 
 ```tsx

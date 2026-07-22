@@ -65,9 +65,9 @@ struct ChatDetailView: View {
     .sheet(item: $mediaPickerMode) { mode in
       MediaPickerSheet(
         mode: mode,
-        onPick: { file in
+        onPick: { files in
           mediaPickerMode = nil
-          handlePickedMediaFile(file)
+          handlePickedMediaFiles(files)
         },
         onCancel: {
           mediaPickerMode = nil
@@ -329,7 +329,10 @@ struct ChatDetailView: View {
           .appendingPathComponent(UUID().uuidString)
           .appendingPathExtension(contentType.preferredFilenameExtension ?? "dat")
         try data.write(to: fileURL, options: .atomic)
-        await store.sendAttachment(fileURL: fileURL, roomID: room.id, contentType: contentType.preferredMIMEType)
+        let preparedFile = try await MediaPreflight.prepare(
+          PickedMediaFile(url: fileURL, contentType: contentType.preferredMIMEType)
+        )
+        await store.sendAttachment(fileURL: preparedFile.url, roomID: room.id, contentType: preparedFile.contentType)
       } catch {
         store.reportError(error.localizedDescription)
       }
@@ -341,14 +344,147 @@ struct ChatDetailView: View {
   private func handlePickedMediaFile(_ file: PickedMediaFile) {
     isAttachmentPanelVisible = false
     Task {
-      await store.sendAttachment(fileURL: file.url, roomID: room.id, contentType: file.contentType)
+      do {
+        let preparedFile = try await MediaPreflight.prepare(file)
+        await store.sendAttachment(fileURL: preparedFile.url, roomID: room.id, contentType: preparedFile.contentType)
+      } catch {
+        store.reportError(error.localizedDescription)
+      }
+    }
+  }
+
+  private func handlePickedMediaFiles(_ files: [PickedMediaFile]) {
+    isAttachmentPanelVisible = false
+    Task {
+      do {
+        let preparedFiles = try await MediaPreflight.prepare(files)
+        await store.sendAttachments(preparedFiles, roomID: room.id)
+      } catch {
+        store.reportError(error.localizedDescription)
+      }
     }
   }
 }
 
-private struct PickedMediaFile {
+struct PickedMediaFile {
   var url: URL
   var contentType: String?
+}
+
+enum MediaPreflight {
+  static let maxImageSelectionCount = 5
+  static let maxVideoDuration: TimeInterval = 60
+  static let compressVideoAboveBytes = 25 * 1024 * 1024
+  static let maxVideoUploadBytes = 100 * 1024 * 1024
+
+  static func prepare(_ files: [PickedMediaFile]) async throws -> [PickedMediaFile] {
+    var preparedFiles: [PickedMediaFile] = []
+    for file in files.prefix(maxImageSelectionCount) {
+      preparedFiles.append(try await prepare(file))
+    }
+    return preparedFiles
+  }
+
+  static func prepare(_ file: PickedMediaFile) async throws -> PickedMediaFile {
+    guard isVideo(file) else {
+      return file
+    }
+
+    let asset = AVURLAsset(url: file.url)
+    let duration = try await asset.load(.duration).seconds
+    guard duration <= maxVideoDuration else {
+      throw MediaPreflightError.videoTooLong(maxSeconds: Int(maxVideoDuration))
+    }
+
+    let fileSize = try file.url.fileSize
+    guard fileSize <= maxVideoUploadBytes else {
+      throw MediaPreflightError.videoTooLarge(maxMegabytes: maxVideoUploadBytes / 1_048_576)
+    }
+
+    guard fileSize > compressVideoAboveBytes else {
+      return file
+    }
+
+    do {
+      let compressedURL = try await compressVideo(file.url)
+      let compressedSize = try compressedURL.fileSize
+      guard compressedSize < fileSize else {
+        return file
+      }
+      return PickedMediaFile(url: compressedURL, contentType: "video/mp4")
+    } catch {
+      return file
+    }
+  }
+
+  private static func isVideo(_ file: PickedMediaFile) -> Bool {
+    if let contentType = file.contentType, contentType.hasPrefix("video/") {
+      return true
+    }
+    return UTType(filenameExtension: file.url.pathExtension)?.conforms(to: .movie) == true
+  }
+
+  private static func compressVideo(_ sourceURL: URL) async throws -> URL {
+    let asset = AVURLAsset(url: sourceURL)
+    guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetMediumQuality) else {
+      throw MediaPreflightError.videoCompressionUnavailable
+    }
+
+    let destinationURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+      .appendingPathExtension("mp4")
+    exportSession.outputURL = destinationURL
+    exportSession.outputFileType = .mp4
+    exportSession.shouldOptimizeForNetworkUse = true
+    let exportSessionBox = SendableExportSession(exportSession)
+
+    return try await withCheckedThrowingContinuation { continuation in
+      exportSession.exportAsynchronously {
+        switch exportSessionBox.session.status {
+        case .completed:
+          continuation.resume(returning: destinationURL)
+        case .failed, .cancelled:
+          continuation.resume(throwing: exportSessionBox.session.error ?? MediaPreflightError.videoCompressionUnavailable)
+        default:
+          continuation.resume(throwing: MediaPreflightError.videoCompressionUnavailable)
+        }
+      }
+    }
+  }
+}
+
+private final class SendableExportSession: @unchecked Sendable {
+  let session: AVAssetExportSession
+
+  init(_ session: AVAssetExportSession) {
+    self.session = session
+  }
+}
+
+enum MediaPreflightError: LocalizedError {
+  case videoTooLong(maxSeconds: Int)
+  case videoTooLarge(maxMegabytes: Int)
+  case videoCompressionUnavailable
+
+  var errorDescription: String? {
+    switch self {
+    case let .videoTooLong(maxSeconds):
+      return "Videos must be \(maxSeconds) seconds or shorter."
+    case let .videoTooLarge(maxMegabytes):
+      return "This video is too large. Choose a video smaller than \(maxMegabytes) MB."
+    case .videoCompressionUnavailable:
+      return "This video could not be prepared for upload."
+    }
+  }
+}
+
+extension URL {
+  var fileSize: Int {
+    get throws {
+      let values = try resourceValues(forKeys: [.fileSizeKey])
+      return values.fileSize ?? 0
+    }
+  }
 }
 
 #if os(iOS)
@@ -370,13 +506,13 @@ private enum MediaPickerMode: String, Identifiable {
 
 private struct MediaPickerSheet: UIViewControllerRepresentable {
   var mode: MediaPickerMode
-  var onPick: (PickedMediaFile) -> Void
+  var onPick: ([PickedMediaFile]) -> Void
   var onCancel: () -> Void
 
   func makeUIViewController(context: Context) -> PHPickerViewController {
     var configuration = PHPickerConfiguration(photoLibrary: .shared())
     configuration.filter = mode.filter
-    configuration.selectionLimit = 1
+    configuration.selectionLimit = mode == .photo ? MediaPreflight.maxImageSelectionCount : 1
     let picker = PHPickerViewController(configuration: configuration)
     picker.delegate = context.coordinator
     return picker
@@ -390,21 +526,44 @@ private struct MediaPickerSheet: UIViewControllerRepresentable {
 
   final class Coordinator: NSObject, PHPickerViewControllerDelegate {
     private let mode: MediaPickerMode
-    private let onPick: (PickedMediaFile) -> Void
+    private let onPick: ([PickedMediaFile]) -> Void
     private let onCancel: () -> Void
 
-    init(mode: MediaPickerMode, onPick: @escaping (PickedMediaFile) -> Void, onCancel: @escaping () -> Void) {
+    init(mode: MediaPickerMode, onPick: @escaping ([PickedMediaFile]) -> Void, onCancel: @escaping () -> Void) {
       self.mode = mode
       self.onPick = onPick
       self.onCancel = onCancel
     }
 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-      guard let provider = results.first?.itemProvider else {
+      guard !results.isEmpty else {
         onCancel()
         return
       }
 
+      let limitedResults = Array(results.prefix(mode == .photo ? MediaPreflight.maxImageSelectionCount : 1))
+      var pickedFiles = Array<PickedMediaFile?>(repeating: nil, count: limitedResults.count)
+      let group = DispatchGroup()
+
+      for (index, result) in limitedResults.enumerated() {
+        group.enter()
+        loadPickedFile(from: result.itemProvider) { file in
+          pickedFiles[index] = file
+          group.leave()
+        }
+      }
+
+      group.notify(queue: .main) {
+        let validFiles = pickedFiles.compactMap { $0 }
+        if validFiles.isEmpty {
+          self.onCancel()
+        } else {
+          self.onPick(validFiles)
+        }
+      }
+    }
+
+    private func loadPickedFile(from provider: NSItemProvider, completion: @escaping (PickedMediaFile?) -> Void) {
       let fallbackType = mode == .photo ? UTType.image.identifier : UTType.movie.identifier
       let typeIdentifier = provider.registeredTypeIdentifiers.first { identifier in
         guard let type = UTType(identifier) else {
@@ -416,33 +575,33 @@ private struct MediaPickerSheet: UIViewControllerRepresentable {
       provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { url, error in
         if let error {
           DispatchQueue.main.async {
-            self.onCancel()
             assertionFailure(error.localizedDescription)
+            completion(nil)
           }
           return
         }
 
         guard let url else {
-          self.loadDataRepresentation(provider: provider, typeIdentifier: typeIdentifier)
+          self.loadDataRepresentation(provider: provider, typeIdentifier: typeIdentifier, completion: completion)
           return
         }
 
         do {
           let copiedURL = try Self.copyTemporaryFile(from: url, typeIdentifier: typeIdentifier)
           DispatchQueue.main.async {
-            self.onPick(PickedMediaFile(url: copiedURL, contentType: UTType(typeIdentifier)?.preferredMIMEType))
+            completion(PickedMediaFile(url: copiedURL, contentType: UTType(typeIdentifier)?.preferredMIMEType))
           }
         } catch {
-          self.loadDataRepresentation(provider: provider, typeIdentifier: typeIdentifier)
+          self.loadDataRepresentation(provider: provider, typeIdentifier: typeIdentifier, completion: completion)
         }
       }
     }
 
-    private func loadDataRepresentation(provider: NSItemProvider, typeIdentifier: String) {
+    private func loadDataRepresentation(provider: NSItemProvider, typeIdentifier: String, completion: @escaping (PickedMediaFile?) -> Void) {
       provider.loadDataRepresentation(forTypeIdentifier: typeIdentifier) { data, _ in
         guard let data else {
           DispatchQueue.main.async {
-            self.onCancel()
+            completion(nil)
           }
           return
         }
@@ -450,11 +609,11 @@ private struct MediaPickerSheet: UIViewControllerRepresentable {
         do {
           let fileURL = try Self.writeTemporaryData(data, typeIdentifier: typeIdentifier)
           DispatchQueue.main.async {
-            self.onPick(PickedMediaFile(url: fileURL, contentType: UTType(typeIdentifier)?.preferredMIMEType))
+            completion(PickedMediaFile(url: fileURL, contentType: UTType(typeIdentifier)?.preferredMIMEType))
           }
         } catch {
           DispatchQueue.main.async {
-            self.onCancel()
+            completion(nil)
           }
         }
       }

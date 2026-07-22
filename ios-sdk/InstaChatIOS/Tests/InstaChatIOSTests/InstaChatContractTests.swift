@@ -159,4 +159,30 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(message.attachment?.contentType, "audio/mp4")
     XCTAssertEqual(message.attachment?.fileName, "voice-note.m4a")
   }
+
+  func testLocalEchoKeyMatchesBackendEchoForSameTextMessage() {
+    let localMessage = InstaChatMessage(
+      id: "local-1",
+      roomID: "room-1",
+      senderID: "user-1",
+      content: "Hello",
+      type: .text,
+      createdAt: Date()
+    )
+    let backendEcho = InstaChatMessage(
+      id: "server-1",
+      roomID: "room-1",
+      senderID: "user-1",
+      content: "Hello",
+      type: .text,
+      createdAt: Date()
+    )
+
+    XCTAssertEqual(localMessage.localEchoKey, backendEcho.localEchoKey)
+  }
+
+  func testMediaPreflightLimitsMatchSDKContract() {
+    XCTAssertEqual(MediaPreflight.maxImageSelectionCount, 5)
+    XCTAssertEqual(MediaPreflight.maxVideoDuration, 60)
+  }
 }

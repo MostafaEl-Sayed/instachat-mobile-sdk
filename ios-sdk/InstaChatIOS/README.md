@@ -75,6 +75,13 @@ Add the permissions your host app enables:
 <string>Record voice notes for chat.</string>
 ```
 
+## Media Limits
+
+- Users can select and send up to 5 images at once.
+- Users can select one video at a time.
+- Videos must be 60 seconds or shorter.
+- Large valid videos are compressed before upload when possible. Very large videos are rejected before upload so the UI does not break during backend upload.
+
 ## Backend
 
 The package uses the live InstaChat backend:

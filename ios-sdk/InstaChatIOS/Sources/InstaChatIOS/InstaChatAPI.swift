@@ -31,21 +31,24 @@ public final class InstaChatClient: NSObject, URLSessionWebSocketDelegate, @unch
   private var webSocketTask: URLSessionWebSocketTask?
   private var messageContinuation: AsyncStream<InstaChatRealtimeEvent>.Continuation?
   private var currentBackendUserID: String?
+  private let tokenIdentity: InstaChatTokenIdentity
 
   public init(configuration: InstaChatConfiguration, session: URLSession = .shared) {
     self.configuration = configuration
     self.session = session
     self.decoder = JSONDecoder()
     self.decoder.dateDecodingStrategy = .iso8601WithFractionalSeconds
+    self.tokenIdentity = InstaChatTokenIdentity(token: configuration.token)
+    self.currentBackendUserID = tokenIdentity.subject
   }
 
   public func getRooms() async throws -> [InstaChatRoom] {
     let rooms: [BackendRoom] = try await request(path: "/api/v1/me/rooms")
-    currentBackendUserID = rooms
+    currentBackendUserID = tokenIdentity.subject ?? rooms
       .flatMap { $0.members ?? [] }
-      .first { $0.externalUserID == configuration.user.id }?
+      .first { $0.matchesCurrentUser(externalUserID: currentExternalUserID) }?
       .id
-    return rooms.map { $0.toDomain(currentUserID: configuration.user.id) }
+    return rooms.map { $0.toDomain(currentUserID: currentExternalUserID, currentBackendUserID: currentBackendUserID) }
   }
 
   public func getMessages(roomID: String, limit: Int? = nil, cursor: String? = nil) async throws -> InstaChatMessagesPage {
@@ -204,6 +207,10 @@ public final class InstaChatClient: NSObject, URLSessionWebSocketDelegate, @unch
       .forEach { messageContinuation?.yield($0) }
   }
 
+  private var currentExternalUserID: String {
+    tokenIdentity.externalUserID ?? configuration.user.id
+  }
+
   private func request<T: Decodable>(path: String) async throws -> T {
     try await request(url: configuration.baseURL.appendingInstaChatPath(path))
   }
@@ -278,6 +285,7 @@ struct BackendMessageOrTypingPayload: Decodable {
   var type: InstaChatMessageType?
   var createdAt: Date?
   var attachments: [BackendAttachment]?
+  var sender: BackendSenderInfo?
   var userID: String?
   var isTyping: Bool?
 
@@ -289,12 +297,13 @@ struct BackendMessageOrTypingPayload: Decodable {
     case type
     case createdAt = "created_at"
     case attachments
+    case sender
     case userID = "user_id"
     case isTyping = "is_typing"
   }
 
   var message: BackendMessage? {
-    guard let id, let roomID, let senderID, let content, let type, let createdAt else {
+    guard let id, let roomID, let content, let type, let createdAt else {
       return nil
     }
     return BackendMessage(
@@ -304,7 +313,8 @@ struct BackendMessageOrTypingPayload: Decodable {
       content: content,
       type: type,
       createdAt: createdAt,
-      attachments: attachments
+      attachments: attachments,
+      sender: sender
     )
   }
 }
@@ -326,16 +336,23 @@ struct BackendRoom: Decodable {
     case members
   }
 
-  func toDomain(currentUserID: String) -> InstaChatRoom {
-    let otherMember = members?.first { ($0.externalUserID ?? $0.id) != currentUserID } ?? members?.first
+  func toDomain(currentUserID: String, currentBackendUserID: String?) -> InstaChatRoom {
+    let otherMember = members?.first { !$0.matchesCurrentUser(externalUserID: currentUserID, backendUserID: currentBackendUserID) } ?? members?.first
     return InstaChatRoom(
       id: id,
       title: otherMember?.displayName ?? "Chat",
       subtitle: lastMessage?.summary ?? (otherMember?.isOnline == true ? "Online" : nil),
       avatarURL: otherMember?.avatarURL,
+      providerID: otherMember?.id,
+      providerExternalUserID: otherMember?.externalUserID,
+      providerProfileURL: otherMember?.profileURL,
       updatedAt: lastMessage?.createdAt ?? createdAt,
       unreadCount: unreadCount ?? 0
     )
+  }
+
+  func toDomain(currentUserID: String) -> InstaChatRoom {
+    toDomain(currentUserID: currentUserID, currentBackendUserID: nil)
   }
 }
 
@@ -344,6 +361,7 @@ struct BackendRoomMember: Decodable {
   var externalUserID: String?
   var displayName: String
   var avatarURL: URL?
+  var profileURL: URL?
   var isOnline: Bool?
 
   enum CodingKeys: String, CodingKey {
@@ -351,6 +369,7 @@ struct BackendRoomMember: Decodable {
     case externalUserID = "ext_user_id"
     case displayName = "display_name"
     case avatarURL = "avatar_url"
+    case profileURL = "profile_url"
     case isOnline = "is_online"
   }
 
@@ -360,7 +379,12 @@ struct BackendRoomMember: Decodable {
     externalUserID = try container.decodeIfPresent(String.self, forKey: .externalUserID)
     displayName = try container.decode(String.self, forKey: .displayName)
     avatarURL = container.decodeOptionalURL(forKey: .avatarURL)
+    profileURL = container.decodeOptionalURL(forKey: .profileURL)
     isOnline = try container.decodeIfPresent(Bool.self, forKey: .isOnline)
+  }
+
+  func matchesCurrentUser(externalUserID: String?, backendUserID: String? = nil) -> Bool {
+    id == backendUserID || self.externalUserID == externalUserID || id == externalUserID
   }
 }
 
@@ -406,11 +430,12 @@ struct BackendMessagesPage: Decodable {
 struct BackendMessage: Decodable {
   var id: String
   var roomID: String
-  var senderID: String
+  var senderID: String?
   var content: String
   var type: InstaChatMessageType
   var createdAt: Date
   var attachments: [BackendAttachment]?
+  var sender: BackendSenderInfo?
 
   enum CodingKeys: String, CodingKey {
     case id
@@ -420,21 +445,71 @@ struct BackendMessage: Decodable {
     case type
     case createdAt = "created_at"
     case attachments
+    case sender
   }
 
   func toDomain(currentUserID: String, currentBackendUserID: String? = nil) -> InstaChatMessage {
     let attachment = attachments?.first?.toDomain()
     let location = type == .location ? try? JSONDecoder().decode(InstaChatLocation.self, from: Data(content.utf8)) : nil
+    let resolvedSenderID = senderID == currentBackendUserID || senderID == currentUserID ? currentUserID : (senderID ?? "provider")
     return InstaChatMessage(
       id: id,
       roomID: roomID,
-      senderID: senderID == currentBackendUserID ? currentUserID : senderID,
+      senderID: resolvedSenderID,
+      senderName: sender?.displayName,
       content: content,
       type: type,
       createdAt: createdAt,
       attachment: attachment,
       location: location
     )
+  }
+}
+
+struct BackendSenderInfo: Decodable {
+  var displayName: String?
+  var avatarURL: URL?
+
+  enum CodingKeys: String, CodingKey {
+    case displayName = "display_name"
+    case avatarURL = "avatar_url"
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
+    avatarURL = container.decodeOptionalURL(forKey: .avatarURL)
+  }
+}
+
+struct InstaChatTokenIdentity {
+  var subject: String?
+  var externalUserID: String?
+
+  init(token: String) {
+    let parts = token.split(separator: ".")
+    guard parts.count >= 2 else {
+      return
+    }
+
+    let payload = String(parts[1])
+    guard let data = Data(base64URLEncoded: payload),
+          let claims = try? JSONDecoder().decode(Claims.self, from: data) else {
+      return
+    }
+
+    subject = claims.subject
+    externalUserID = claims.externalUserID
+  }
+
+  private struct Claims: Decodable {
+    var subject: String?
+    var externalUserID: String?
+
+    enum CodingKeys: String, CodingKey {
+      case subject = "sub"
+      case externalUserID = "ext_user_id"
+    }
   }
 }
 
@@ -571,6 +646,18 @@ private extension URL {
     let trimmedBase = absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     return URL(string: "\(trimmedBase)/\(trimmedPath)") ?? appendingPathComponent(trimmedPath)
+  }
+}
+
+private extension Data {
+  init?(base64URLEncoded value: String) {
+    var base64 = value
+      .replacingOccurrences(of: "-", with: "+")
+      .replacingOccurrences(of: "_", with: "/")
+
+    let paddingLength = (4 - base64.count % 4) % 4
+    base64 += String(repeating: "=", count: paddingLength)
+    self.init(base64Encoded: base64)
   }
 }
 

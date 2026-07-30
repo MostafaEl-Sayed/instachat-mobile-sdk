@@ -32,7 +32,12 @@ struct SupportChatScreen: View {
       user: InstaChatUser(id: "user-1", name: "Mostafa")
     )
 
-    sdk.chatListView()
+    sdk.chatListView(
+      onProviderProfileTap: { room in
+        // Navigate to your native provider profile screen.
+        openProviderProfile(id: room.providerExternalUserID ?? room.providerID)
+      }
+    )
   }
 }
 ```
@@ -42,6 +47,8 @@ Open a specific room directly:
 ```swift
 sdk.chatView(roomID: "room-id", title: "Support")
 ```
+
+The provider name/avatar in the chat header is tappable when `onProviderProfileTap` is supplied. The SDK passes the active `InstaChatRoom`, including `providerID`, `providerExternalUserID`, and `providerProfileURL` when the backend provides them.
 
 `InstaChatView(configuration:)` still works for existing consumers, but it is now a legacy compatibility entry point. Prefer `InstaChat.initialize(...)`; the direct configuration view initializer will be formally deprecated in a future release.
 

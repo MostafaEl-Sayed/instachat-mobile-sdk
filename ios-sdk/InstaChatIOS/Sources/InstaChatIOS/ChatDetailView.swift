@@ -31,6 +31,7 @@ struct ChatDetailView: View {
   #endif
   var room: InstaChatRoom
   var onClose: (() -> Void)?
+  var onProviderProfileTap: ((InstaChatRoom) -> Void)?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -42,6 +43,10 @@ struct ChatDetailView: View {
     .navigationBarTitleDisplayMode(.inline)
     #endif
     .toolbar {
+      ToolbarItem(placement: .principal) {
+        providerTitle
+      }
+
       if let onClose {
       #if os(iOS)
         ToolbarItem(placement: .topBarTrailing) {
@@ -60,6 +65,9 @@ struct ChatDetailView: View {
       }
       didLoad = true
       await store.loadMessages(roomID: room.id)
+      if store.rooms.isEmpty {
+        await store.loadRooms()
+      }
     }
     .onChange(of: selectedPhoto) { item in
       handlePickedMedia(item)
@@ -84,6 +92,29 @@ struct ChatDetailView: View {
     .photosPicker(isPresented: $isPhotoPickerPresented, selection: $selectedPhoto, matching: .images)
     .photosPicker(isPresented: $isVideoPickerPresented, selection: $selectedVideo, matching: .videos)
     #endif
+  }
+
+  private var providerTitle: some View {
+    Button {
+      onProviderProfileTap?(displayRoom)
+    } label: {
+      HStack(spacing: 8) {
+        AvatarView(title: displayRoom.title, url: displayRoom.avatarURL, size: 30)
+
+        Text(displayRoom.title)
+          .font(.headline)
+          .foregroundStyle(.primary)
+          .lineLimit(1)
+      }
+      .frame(maxWidth: 220)
+    }
+    .buttonStyle(.plain)
+    .disabled(onProviderProfileTap == nil)
+    .accessibilityLabel("Open provider profile")
+  }
+
+  private var displayRoom: InstaChatRoom {
+    store.room(id: room.id) ?? room
   }
 
   private var transcript: some View {

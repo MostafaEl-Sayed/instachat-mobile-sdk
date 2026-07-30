@@ -65,6 +65,9 @@ public struct InstaChatRoom: Identifiable, Hashable, Sendable {
   public var title: String
   public var subtitle: String?
   public var avatarURL: URL?
+  public var providerID: String?
+  public var providerExternalUserID: String?
+  public var providerProfileURL: URL?
   public var updatedAt: Date?
   public var unreadCount: Int
 
@@ -73,6 +76,9 @@ public struct InstaChatRoom: Identifiable, Hashable, Sendable {
     title: String,
     subtitle: String? = nil,
     avatarURL: URL? = nil,
+    providerID: String? = nil,
+    providerExternalUserID: String? = nil,
+    providerProfileURL: URL? = nil,
     updatedAt: Date? = nil,
     unreadCount: Int = 0
   ) {
@@ -80,6 +86,9 @@ public struct InstaChatRoom: Identifiable, Hashable, Sendable {
     self.title = title
     self.subtitle = subtitle
     self.avatarURL = avatarURL
+    self.providerID = providerID
+    self.providerExternalUserID = providerExternalUserID
+    self.providerProfileURL = providerProfileURL
     self.updatedAt = updatedAt
     self.unreadCount = unreadCount
   }
@@ -124,6 +133,12 @@ public enum InstaChatMessageType: String, Codable, Hashable, Sendable {
   case image
   case file
   case location
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    let rawValue = try container.decode(String.self)
+    self = InstaChatMessageType(rawValue: rawValue) ?? .text
+  }
 }
 
 public struct InstaChatAttachment: Identifiable, Hashable, Sendable {

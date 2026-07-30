@@ -2,7 +2,7 @@
 
 Small native SwiftUI iOS app for validating the `InstaChatIOS` SDK integration.
 
-The sample project depends on the public Swift Package at `https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git` starting from `v0.1.17`.
+The sample project depends on the public Swift Package at `https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git` starting from `v0.1.18`.
 
 ## Open
 
@@ -42,6 +42,9 @@ InstaChatView(
   ),
   onClose: {
     isShowingChat = false
+  },
+  onProviderProfileTap: { room in
+    openProviderProfile(id: room.providerExternalUserID ?? room.providerID)
   }
 )
 ```

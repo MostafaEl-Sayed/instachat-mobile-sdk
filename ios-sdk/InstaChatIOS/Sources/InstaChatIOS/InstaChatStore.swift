@@ -146,6 +146,10 @@ final class InstaChatStore: ObservableObject {
     messagesByRoom[roomID] ?? []
   }
 
+  func room(id roomID: String) -> InstaChatRoom? {
+    rooms.first { $0.id == roomID }
+  }
+
   private func applyRealtimeEvent(_ event: InstaChatRealtimeEvent) {
     switch event {
     case let .message(message):

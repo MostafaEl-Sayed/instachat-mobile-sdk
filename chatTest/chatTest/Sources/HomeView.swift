@@ -9,6 +9,7 @@ struct HomeView: View {
   @State private var activeChat: ActiveChatPresentation?
   @State private var shouldAutoOpenChat = ProcessInfo.processInfo.environment["INSTACHAT_AUTO_OPEN_CHAT"] == "1"
   @State private var validationMessage: String?
+  @State private var providerProfileMessage: String?
 
   var body: some View {
     NavigationStack {
@@ -119,9 +120,21 @@ struct HomeView: View {
       } message: {
         Text(validationMessage ?? "")
       }
+      .alert("Provider Profile", isPresented: Binding(get: { providerProfileMessage != nil }, set: { _ in providerProfileMessage = nil })) {
+        Button("OK", role: .cancel) {}
+      } message: {
+        Text(providerProfileMessage ?? "")
+      }
       .fullScreenCover(item: $activeChat) { activeChat in
         ChatScreen(presentation: activeChat) {
           self.activeChat = nil
+        } onProviderProfileTap: { room in
+          providerProfileMessage = [
+            "Provider: \(room.title)",
+            "Internal id: \(room.providerID ?? "n/a")",
+            "External id: \(room.providerExternalUserID ?? "n/a")",
+            "Profile URL: \(room.providerProfileURL?.absoluteString ?? "n/a")"
+          ].joined(separator: "\n")
         }
       }
       .task {
@@ -197,13 +210,14 @@ private enum ChatPresentationMode {
 private struct ChatScreen: View {
   let presentation: ActiveChatPresentation
   var onClose: () -> Void
+  var onProviderProfileTap: (InstaChatRoom) -> Void
 
   var body: some View {
     switch presentation.mode {
     case .list:
-      presentation.sdk.chatListView(onClose: onClose)
+      presentation.sdk.chatListView(onClose: onClose, onProviderProfileTap: onProviderProfileTap)
     case let .room(id, title):
-      presentation.sdk.chatView(roomID: id, title: title, onClose: onClose)
+      presentation.sdk.chatView(roomID: id, title: title, onClose: onClose, onProviderProfileTap: onProviderProfileTap)
     }
   }
 }

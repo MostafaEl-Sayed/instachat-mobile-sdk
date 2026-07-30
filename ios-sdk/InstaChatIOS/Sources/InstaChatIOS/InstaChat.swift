@@ -57,21 +57,27 @@ public struct InstaChatSDK: Sendable {
   }
 
   public init(configuration: InstaChatConfiguration) {
-    self.configuration = InstaChatConfiguration(
-      baseURL: configuration.baseURL,
-      token: configuration.token,
-      user: configuration.user,
-      historyLimit: configuration.historyLimit,
-      title: configuration.title
+    self.configuration = configuration
+  }
+
+  public func chatListView(
+    onClose: (() -> Void)? = nil,
+    onProviderProfileTap: ((InstaChatRoom) -> Void)? = nil
+  ) -> InstaChatView {
+    InstaChatView(configuration: configuration, onClose: onClose, onProviderProfileTap: onProviderProfileTap)
+  }
+
+  public func chatView(
+    roomID: String,
+    title: String? = nil,
+    onClose: (() -> Void)? = nil,
+    onProviderProfileTap: ((InstaChatRoom) -> Void)? = nil
+  ) -> InstaChatView {
+    InstaChatView(
+      configuration: configuration.openingRoom(id: roomID, title: title),
+      onClose: onClose,
+      onProviderProfileTap: onProviderProfileTap
     )
-  }
-
-  public func chatListView(onClose: (() -> Void)? = nil) -> InstaChatView {
-    InstaChatView(configuration: configuration, onClose: onClose)
-  }
-
-  public func chatView(roomID: String, title: String? = nil, onClose: (() -> Void)? = nil) -> InstaChatView {
-    InstaChatView(configuration: configuration.openingRoom(id: roomID, title: title), onClose: onClose)
   }
 
   #if os(iOS)
@@ -103,22 +109,28 @@ public struct InstaChatSDK: Sendable {
 public struct InstaChatView: View {
   @StateObject private var store: InstaChatStore
   private let onClose: (() -> Void)?
+  private let onProviderProfileTap: ((InstaChatRoom) -> Void)?
 
   /// Legacy compatibility initializer. Prefer creating `InstaChatSDK` once with
   /// `InstaChat.initialize(...)`, then call `sdk.chatListView(...)` or
   /// `sdk.chatView(roomID:...)`. This initializer will be deprecated in a future release.
-  public init(configuration: InstaChatConfiguration, onClose: (() -> Void)? = nil) {
+  public init(
+    configuration: InstaChatConfiguration,
+    onClose: (() -> Void)? = nil,
+    onProviderProfileTap: ((InstaChatRoom) -> Void)? = nil
+  ) {
     _store = StateObject(wrappedValue: InstaChatStore(configuration: configuration))
     self.onClose = onClose
+    self.onProviderProfileTap = onProviderProfileTap
   }
 
   public var body: some View {
     NavigationStack {
       if let room = store.configuration.initialRoom {
-        ChatDetailView(room: room, onClose: onClose)
+        ChatDetailView(room: room, onClose: onClose, onProviderProfileTap: onProviderProfileTap)
           .environmentObject(store)
       } else {
-        ChatRoomListView(onClose: onClose)
+        ChatRoomListView(onClose: onClose, onProviderProfileTap: onProviderProfileTap)
           .environmentObject(store)
       }
     }

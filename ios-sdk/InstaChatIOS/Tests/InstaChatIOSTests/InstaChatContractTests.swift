@@ -17,6 +17,21 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(roomConfiguration.initialRoom?.title, "Support")
   }
 
+  func testSDKConfigurationInitializerPreservesInitialRoom() {
+    let configuration = InstaChatConfiguration(
+      baseURL: URL(string: "https://instachat.instakit.pro")!,
+      token: "token",
+      user: InstaChatUser(id: "user-1", name: "Mostafa"),
+      roomID: "room-1",
+      roomTitle: "Support"
+    )
+
+    let sdk = InstaChatSDK(configuration: configuration)
+
+    XCTAssertEqual(sdk.configuration.roomID, "room-1")
+    XCTAssertEqual(sdk.configuration.initialRoom?.title, "Support")
+  }
+
   func testRoomListDecodesLiveBackendShapeWithEmptyAvatarURL() throws {
     let json = """
     {
@@ -30,6 +45,7 @@ final class InstaChatContractTests: XCTestCase {
           "ext_user_id": "user-2",
           "display_name": "User-2: Hisham",
           "avatar_url": "https://i.pravatar.cc/150?img=7",
+          "profile_url": "https://example.com/providers/user-2",
           "is_online": true
         },
         {
@@ -60,6 +76,9 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(room.subtitle, "SDK validation ping")
     XCTAssertEqual(room.unreadCount, 3)
     XCTAssertNotNil(room.avatarURL)
+    XCTAssertEqual(room.providerID, "member-1")
+    XCTAssertEqual(room.providerExternalUserID, "user-2")
+    XCTAssertEqual(room.providerProfileURL?.absoluteString, "https://example.com/providers/user-2")
   }
 
   func testLocationMessageDecodesFromBackendJSONContent() throws {
@@ -106,6 +125,60 @@ final class InstaChatContractTests: XCTestCase {
     )
 
     XCTAssertEqual(message.senderID, "user-1")
+  }
+
+  func testTokenIdentityMapsBackendEchoToConfiguredUserID() throws {
+    let token = Self.jwt(payload: [
+      "sub": "backend-user-1",
+      "ext_user_id": "external-user-1"
+    ])
+    let identity = InstaChatTokenIdentity(token: token)
+    let json = """
+    {
+      "id": "m-current-user",
+      "room_id": "room-1",
+      "sender_id": "backend-user-1",
+      "content": "Hello",
+      "type": "text",
+      "created_at": "2026-07-06T14:03:00Z"
+    }
+    """.data(using: .utf8)!
+
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601WithFractionalSeconds
+    let backendMessage = try decoder.decode(BackendMessage.self, from: json)
+    let message = backendMessage.toDomain(
+      currentUserID: "configured-user-id",
+      currentBackendUserID: identity.subject
+    )
+
+    XCTAssertEqual(identity.externalUserID, "external-user-1")
+    XCTAssertEqual(message.senderID, "configured-user-id")
+  }
+
+  func testAutomaticMessageWithoutSenderIDStillRendersAsProviderMessage() throws {
+    let json = """
+    {
+      "id": "m-automatic",
+      "room_id": "room-1",
+      "content": "Thanks for reaching out. We will reply soon.",
+      "type": "automatic",
+      "created_at": "2026-07-06T14:03:00Z",
+      "sender": {
+        "display_name": "Provider"
+      }
+    }
+    """.data(using: .utf8)!
+
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601WithFractionalSeconds
+    let backendMessage = try decoder.decode(BackendMessage.self, from: json)
+    let message = backendMessage.toDomain(currentUserID: "user-1", currentBackendUserID: "backend-user-1")
+
+    XCTAssertEqual(message.type, .text)
+    XCTAssertEqual(message.senderID, "provider")
+    XCTAssertEqual(message.senderName, "Provider")
+    XCTAssertEqual(message.content, "Thanks for reaching out. We will reply soon.")
   }
 
   func testOutgoingLocationPayloadMatchesBackendContract() throws {
@@ -184,5 +257,23 @@ final class InstaChatContractTests: XCTestCase {
   func testMediaPreflightLimitsMatchSDKContract() {
     XCTAssertEqual(MediaPreflight.maxImageSelectionCount, 5)
     XCTAssertEqual(MediaPreflight.maxVideoDuration, 60)
+  }
+
+  private static func jwt(payload: [String: String]) -> String {
+    let header = #"{"alg":"none","typ":"JWT"}"#
+    let payloadData = try! JSONSerialization.data(withJSONObject: payload)
+    let payloadString = String(data: payloadData, encoding: .utf8)!
+    return [header, payloadString, ""]
+      .map { Data($0.utf8).base64URLEncodedString() }
+      .joined(separator: ".")
+  }
+}
+
+private extension Data {
+  func base64URLEncodedString() -> String {
+    base64EncodedString()
+      .replacingOccurrences(of: "+", with: "-")
+      .replacingOccurrences(of: "/", with: "_")
+      .replacingOccurrences(of: "=", with: "")
   }
 }

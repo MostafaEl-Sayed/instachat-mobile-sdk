@@ -3,6 +3,7 @@ import SwiftUI
 struct ChatRoomListView: View {
   @EnvironmentObject private var store: InstaChatStore
   var onClose: (() -> Void)?
+  var onProviderProfileTap: ((InstaChatRoom) -> Void)?
 
   var body: some View {
     Group {
@@ -38,6 +39,11 @@ struct ChatRoomListView: View {
     }
     .navigationTitle(store.configuration.title)
     .toolbar {
+      ToolbarItem(placement: .principal) {
+        Text(store.configuration.title)
+          .font(.headline)
+      }
+
       if let onClose {
         #if os(iOS)
         ToolbarItem(placement: .topBarTrailing) {
@@ -51,7 +57,7 @@ struct ChatRoomListView: View {
       }
     }
     .navigationDestination(for: InstaChatRoom.self) { room in
-      ChatDetailView(room: room, onClose: onClose)
+      ChatDetailView(room: room, onClose: onClose, onProviderProfileTap: onProviderProfileTap)
         .environmentObject(store)
     }
     .alert("Chat Error", isPresented: Binding(get: { store.errorMessage != nil }, set: { _ in })) {

@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git",
       "state" : {
-        "revision" : "239ab519cbddb90c25516eb1ea18d42f62587f8e",
-        "version" : "0.1.18"
+        "revision" : "d183c5d9083b6175fa43962b793c355838840bc0",
+        "version" : "0.1.19"
       }
     }
   ],

@@ -259,6 +259,42 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(MediaPreflight.maxVideoDuration, 60)
   }
 
+  func testMessageLinkifierDetectsHTTPAndHTTPSURLsInMultilineText() {
+    let text = """
+    Please check https://instachat.instakit.pro/provider-details/provider-123
+    Backup: http://example.com/path?query=1
+    """
+
+    let urls = MessageLinkifier.detectedURLs(in: text).map(\.absoluteString)
+
+    XCTAssertEqual(urls, [
+      "https://instachat.instakit.pro/provider-details/provider-123",
+      "http://example.com/path?query=1"
+    ])
+  }
+
+  func testMessageLinkifierIgnoresNonWebSchemes() {
+    let urls = MessageLinkifier.detectedURLs(in: "Email mailto:test@example.com and open ftp://example.com")
+
+    XCTAssertTrue(urls.isEmpty)
+  }
+
+  func testMessageLinkifierDetectsURLInsideArabicRTLMessage() {
+    let text = "مرحبا، افتح هذا الرابط https://instachat.instakit.pro/provider-details/abc123 من فضلك"
+
+    let urls = MessageLinkifier.detectedURLs(in: text).map(\.absoluteString)
+
+    XCTAssertEqual(urls, ["https://instachat.instakit.pro/provider-details/abc123"])
+  }
+
+  func testAttributedMessageContainsLinkAttribute() throws {
+    let attributed = MessageLinkifier.attributedString(for: "Open https://apps.apple.com/app/id123", isCurrentUser: false)
+    let linkedRun = try XCTUnwrap(attributed.runs.first { $0.link != nil })
+
+    XCTAssertEqual(linkedRun.link?.absoluteString, "https://apps.apple.com/app/id123")
+    XCTAssertEqual(linkedRun.underlineStyle, .single)
+  }
+
   private static func jwt(payload: [String: String]) -> String {
     let header = #"{"alg":"none","typ":"JWT"}"#
     let payloadData = try! JSONSerialization.data(withJSONObject: payload)

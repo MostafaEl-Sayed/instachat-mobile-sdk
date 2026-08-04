@@ -91,6 +91,10 @@ Location sharing is handled inside the SDK. When the user taps Location, the SDK
 - Videos must be 60 seconds or shorter.
 - Large valid videos are compressed before upload when possible. Very large videos are rejected before upload so the UI does not break during backend upload.
 
+## Text Links
+
+Text messages automatically detect embedded `http://` and `https://` URLs, including multiline and Arabic/right-to-left messages. Links render with underline styling inside the existing sender/receiver bubble design and open through the standard platform URL opener, so Grandizar universal links such as `/provider-details/{providerId}` can route into the app when iOS supports them, while external links open in Safari, the App Store, or the appropriate app.
+
 ## Backend
 
 The package uses the live InstaChat backend:

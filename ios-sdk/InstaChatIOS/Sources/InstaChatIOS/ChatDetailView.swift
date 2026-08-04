@@ -736,8 +736,8 @@ private struct MessageBubbleView: View {
   private var content: some View {
     switch message.type {
     case .text:
-      Text(message.content)
-        .bubbleStyle(isCurrentUser: isCurrentUser)
+      LinkedMessageText(content: message.content, isCurrentUser: isCurrentUser)
+        .linkedBubbleStyle(isCurrentUser: isCurrentUser)
     case .location:
       LocationBubble(location: message.location, isCurrentUser: isCurrentUser)
     case .image, .file:
@@ -749,10 +749,78 @@ private struct MessageBubbleView: View {
           voicePlaybackController: voicePlaybackController
         )
       } else {
-        Text(message.content)
-          .bubbleStyle(isCurrentUser: isCurrentUser)
+        LinkedMessageText(content: message.content, isCurrentUser: isCurrentUser)
+          .linkedBubbleStyle(isCurrentUser: isCurrentUser)
       }
     }
+  }
+}
+
+private struct LinkedMessageText: View {
+  var content: String
+  var isCurrentUser: Bool
+
+  var body: some View {
+    Text(MessageLinkifier.attributedString(for: content, isCurrentUser: isCurrentUser))
+      .textSelection(.enabled)
+      .fixedSize(horizontal: false, vertical: true)
+      .environment(\.openURL, OpenURLAction { url in
+        PlatformURLOpener.open(url)
+        return .handled
+      })
+      .accessibilityLabel(content)
+  }
+}
+
+enum MessageLinkifier {
+  static func attributedString(for text: String, isCurrentUser: Bool) -> AttributedString {
+    var attributed = AttributedString(text)
+    attributed.foregroundColor = isCurrentUser ? .white : .primary
+
+    for match in detectedURLMatches(in: text) {
+      guard let range = Range(match.range, in: text),
+            let attributedRange = Range(range, in: attributed),
+            let url = match.url else {
+        continue
+      }
+
+      attributed[attributedRange].link = url
+      attributed[attributedRange].underlineStyle = .single
+      attributed[attributedRange].foregroundColor = isCurrentUser ? .white : .accentColor
+    }
+
+    return attributed
+  }
+
+  static func detectedURLs(in text: String) -> [URL] {
+    detectedURLMatches(in: text).compactMap(\.url)
+  }
+
+  private static func detectedURLMatches(in text: String) -> [NSTextCheckingResult] {
+    guard !text.isEmpty else {
+      return []
+    }
+
+    let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+    let range = NSRange(text.startIndex..<text.endIndex, in: text)
+    return detector?
+      .matches(in: text, options: [], range: range)
+      .filter { result in
+        guard let scheme = result.url?.scheme?.lowercased() else {
+          return false
+        }
+        return scheme == "http" || scheme == "https"
+      } ?? []
+  }
+}
+
+enum PlatformURLOpener {
+  static func open(_ url: URL) {
+    #if os(iOS)
+    UIApplication.shared.open(url)
+    #elseif os(macOS)
+    NSWorkspace.shared.open(url)
+    #endif
   }
 }
 
@@ -1507,6 +1575,12 @@ private extension View {
     padding(.horizontal, 13)
       .padding(.vertical, 9)
       .foregroundStyle(isCurrentUser ? .white : .primary)
+      .background(isCurrentUser ? Color.accentColor : Color.gray.opacity(0.14), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+  }
+
+  func linkedBubbleStyle(isCurrentUser: Bool) -> some View {
+    padding(.horizontal, 13)
+      .padding(.vertical, 9)
       .background(isCurrentUser ? Color.accentColor : Color.gray.opacity(0.14), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
   }
 }

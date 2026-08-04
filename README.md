@@ -89,6 +89,12 @@ Media rules in the native iOS SDK:
 - Videos must be 60 seconds or shorter.
 - Large valid videos are compressed before upload when possible; videos over the SDK upload guard are rejected before the backend request.
 
+Text links in the native iOS SDK:
+
+- `http://` and `https://` URLs inside text messages are detected in realtime and historical messages.
+- Links keep the existing bubble alignment and sender/receiver styling, with underline/link color applied to the URL range.
+- Taps use the standard iOS URL opener, including universal-link handoff for supported Grandizar routes such as `/provider-details/{providerId}`.
+
 ## With Host Adapters
 
 ```tsx

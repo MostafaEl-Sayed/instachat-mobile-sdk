@@ -12,6 +12,7 @@ final class InstaChatStore: ObservableObject {
   let configuration: InstaChatConfiguration
   private let client: InstaChatClient
   private var realtimeTask: Task<Void, Never>?
+  private var activeRoomID: String?
 
   init(configuration: InstaChatConfiguration, client: InstaChatClient? = nil) {
     self.configuration = configuration
@@ -43,11 +44,21 @@ final class InstaChatStore: ObservableObject {
     errorMessage = nil
     do {
       let fetchedRooms = try await client.getRooms()
-      rooms = fetchedRooms
+      rooms = mergeRoomList(fetchedRooms)
     } catch {
       errorMessage = error.localizedDescription
     }
     isLoadingRooms = false
+  }
+
+  func setActiveRoom(_ roomID: String?) {
+    activeRoomID = roomID
+    guard let roomID else {
+      return
+    }
+    updateRoom(id: roomID) { room in
+      room.unreadCount = 0
+    }
   }
 
   func loadMessages(roomID: String) async {
@@ -77,7 +88,7 @@ final class InstaChatStore: ObservableObject {
       type: .text,
       createdAt: Date()
     )
-    append(optimisticMessage, replacingLocalEcho: false)
+    append(optimisticMessage, replacingLocalEcho: false, updateRoomPreview: true, incrementsUnread: false)
 
     do {
       try await client.sendText(trimmedText, roomID: roomID)
@@ -97,7 +108,7 @@ final class InstaChatStore: ObservableObject {
       createdAt: Date(),
       location: location
     )
-    append(optimisticMessage, replacingLocalEcho: false)
+    append(optimisticMessage, replacingLocalEcho: false, updateRoomPreview: true, incrementsUnread: false)
 
     do {
       try await client.sendLocation(location, roomID: roomID)
@@ -119,7 +130,7 @@ final class InstaChatStore: ObservableObject {
         createdAt: Date(),
         attachment: attachment
       )
-      append(optimisticMessage, replacingLocalEcho: false)
+      append(optimisticMessage, replacingLocalEcho: false, updateRoomPreview: true, incrementsUnread: false)
       try await client.sendAttachment(attachment, text: attachment.fileName, roomID: roomID)
     } catch {
       errorMessage = error.localizedDescription
@@ -150,10 +161,11 @@ final class InstaChatStore: ObservableObject {
     rooms.first { $0.id == roomID }
   }
 
-  private func applyRealtimeEvent(_ event: InstaChatRealtimeEvent) {
+  func applyRealtimeEvent(_ event: InstaChatRealtimeEvent) {
     switch event {
     case let .message(message):
-      upsert(message)
+      let incrementsUnread = message.senderID != configuration.user.id && message.roomID != activeRoomID
+      upsert(message, updateRoomPreview: true, incrementsUnread: incrementsUnread)
     case let .typing(roomID, _, isTyping):
       if isTyping {
         typingRoomIDs.insert(roomID)
@@ -178,9 +190,12 @@ final class InstaChatStore: ObservableObject {
 
     messages.sort { $0.createdAt < $1.createdAt }
     messagesByRoom[roomID] = messages
+    if let latestMessage = messages.last {
+      updateRoomPreview(with: latestMessage, incrementsUnread: false)
+    }
   }
 
-  private func upsert(_ message: InstaChatMessage) {
+  private func upsert(_ message: InstaChatMessage, updateRoomPreview: Bool, incrementsUnread: Bool) {
     var messages = messagesByRoom[message.roomID] ?? []
 
     if let existingIndex = messages.firstIndex(where: { $0.id == message.id }) {
@@ -193,9 +208,12 @@ final class InstaChatStore: ObservableObject {
 
     messages.sort { $0.createdAt < $1.createdAt }
     messagesByRoom[message.roomID] = messages
+    if updateRoomPreview {
+      self.updateRoomPreview(with: message, incrementsUnread: incrementsUnread)
+    }
   }
 
-  private func append(_ message: InstaChatMessage, replacingLocalEcho: Bool) {
+  func append(_ message: InstaChatMessage, replacingLocalEcho: Bool, updateRoomPreview: Bool = true, incrementsUnread: Bool = false) {
     var messages = messagesByRoom[message.roomID] ?? []
     if messages.contains(where: { $0.id == message.id }) {
       return
@@ -209,6 +227,9 @@ final class InstaChatStore: ObservableObject {
 
     messages.sort { $0.createdAt < $1.createdAt }
     messagesByRoom[message.roomID] = messages
+    if updateRoomPreview {
+      self.updateRoomPreview(with: message, incrementsUnread: incrementsUnread)
+    }
   }
 
   private func localEchoIndex(for message: InstaChatMessage, in messages: [InstaChatMessage]) -> Int? {
@@ -226,6 +247,66 @@ final class InstaChatStore: ObservableObject {
       return candidate.localEchoKey == message.localEchoKey
     }
   }
+
+  private func mergeRoomList(_ fetchedRooms: [InstaChatRoom]) -> [InstaChatRoom] {
+    let localRoomsByID = Dictionary(uniqueKeysWithValues: rooms.map { ($0.id, $0) })
+    return fetchedRooms
+      .map { fetchedRoom in
+        guard let localRoom = localRoomsByID[fetchedRoom.id],
+              let localUpdatedAt = localRoom.updatedAt,
+              let fetchedUpdatedAt = fetchedRoom.updatedAt,
+              localUpdatedAt > fetchedUpdatedAt else {
+          return fetchedRoom
+        }
+
+        var mergedRoom = fetchedRoom
+        mergedRoom.subtitle = localRoom.subtitle
+        mergedRoom.updatedAt = localRoom.updatedAt
+        mergedRoom.unreadCount = max(fetchedRoom.unreadCount, localRoom.unreadCount)
+        return mergedRoom
+      }
+      .sorted(by: roomSort)
+  }
+
+  private func updateRoomPreview(with message: InstaChatMessage, incrementsUnread: Bool) {
+    updateRoom(id: message.roomID) { room in
+      room.subtitle = message.roomPreviewText
+      room.updatedAt = message.createdAt
+      if message.senderID == configuration.user.id {
+        room.unreadCount = 0
+      } else if incrementsUnread {
+        room.unreadCount += 1
+      }
+    }
+  }
+
+  private func updateRoom(id roomID: String, mutate: (inout InstaChatRoom) -> Void) {
+    var updatedRooms = rooms
+    if let index = updatedRooms.firstIndex(where: { $0.id == roomID }) {
+      mutate(&updatedRooms[index])
+    } else {
+      var room = configuration.initialRoom?.id == roomID
+        ? configuration.initialRoom!
+        : InstaChatRoom(id: roomID, title: configuration.roomTitle ?? "Chat")
+      mutate(&room)
+      updatedRooms.append(room)
+    }
+    updatedRooms.sort(by: roomSort)
+    rooms = updatedRooms
+  }
+
+  private func roomSort(_ left: InstaChatRoom, _ right: InstaChatRoom) -> Bool {
+    switch (left.updatedAt, right.updatedAt) {
+    case let (leftDate?, rightDate?):
+      return leftDate > rightDate
+    case (_?, nil):
+      return true
+    case (nil, _?):
+      return false
+    case (nil, nil):
+      return left.title.localizedCaseInsensitiveCompare(right.title) == .orderedAscending
+    }
+  }
 }
 
 extension InstaChatMessage {
@@ -233,5 +314,27 @@ extension InstaChatMessage {
     let attachmentKey = attachment?.id ?? ""
     let locationKey = location.map { "\($0.latitude):\($0.longitude):\($0.name ?? "")" } ?? ""
     return [roomID, senderID, type.rawValue, content, attachmentKey, locationKey].joined(separator: "|")
+  }
+
+  var roomPreviewText: String {
+    switch type {
+    case .text:
+      return content.isEmpty ? "Message" : content
+    case .image:
+      return content.isEmpty ? "Photo" : content
+    case .location:
+      return location?.name ?? "Location"
+    case .file:
+      switch attachment?.type {
+      case .video:
+        return content.isEmpty ? "Video" : content
+      case .audio:
+        return content.isEmpty ? "Voice note" : content
+      case .image:
+        return content.isEmpty ? "Photo" : content
+      case .file, .none:
+        return content.isEmpty ? "File" : content
+      }
+    }
   }
 }

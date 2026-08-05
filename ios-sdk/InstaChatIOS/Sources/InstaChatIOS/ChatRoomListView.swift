@@ -38,6 +38,9 @@ struct ChatRoomListView: View {
       }
     }
     .navigationTitle(store.configuration.title)
+    .task {
+      await store.loadRooms()
+    }
     .toolbar {
       ToolbarItem(placement: .principal) {
         Text(store.configuration.title)

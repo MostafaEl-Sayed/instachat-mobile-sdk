@@ -254,6 +254,133 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(localMessage.localEchoKey, backendEcho.localEchoKey)
   }
 
+  @MainActor
+  func testOptimisticSendUpdatesRoomPreviewAndMovesRoomToTop() {
+    let store = InstaChatStore(configuration: Self.testConfiguration())
+    store.append(Self.message(id: "old", roomID: "room-1", content: "Old", createdAt: Self.date(1)), replacingLocalEcho: false)
+    store.append(Self.message(id: "older-other", roomID: "room-2", content: "Older", createdAt: Self.date(2)), replacingLocalEcho: false)
+
+    let sentMessage = Self.message(
+      id: "local-new",
+      roomID: "room-1",
+      senderID: "user-1",
+      content: "Latest sent text",
+      createdAt: Self.date(3)
+    )
+    store.append(sentMessage, replacingLocalEcho: false)
+
+    XCTAssertEqual(store.rooms.map(\.id), ["room-1", "room-2"])
+    XCTAssertEqual(store.room(id: "room-1")?.subtitle, "Latest sent text")
+    XCTAssertEqual(store.room(id: "room-1")?.updatedAt, Self.date(3))
+    XCTAssertEqual(store.room(id: "room-1")?.unreadCount, 0)
+  }
+
+  @MainActor
+  func testIncomingRealtimeMessageUpdatesPreviewOrderAndUnreadWhenRoomIsNotActive() {
+    let store = InstaChatStore(configuration: Self.testConfiguration())
+    store.append(Self.message(id: "room-1-old", roomID: "room-1", content: "Room 1", createdAt: Self.date(1)), replacingLocalEcho: false)
+    store.append(Self.message(id: "room-2-old", roomID: "room-2", content: "Room 2", createdAt: Self.date(2)), replacingLocalEcho: false)
+
+    let incoming = Self.message(
+      id: "incoming",
+      roomID: "room-1",
+      senderID: "provider-1",
+      content: "Provider reply",
+      createdAt: Self.date(4)
+    )
+    store.applyRealtimeEvent(.message(incoming))
+
+    XCTAssertEqual(store.rooms.map(\.id), ["room-1", "room-2"])
+    XCTAssertEqual(store.room(id: "room-1")?.subtitle, "Provider reply")
+    XCTAssertEqual(store.room(id: "room-1")?.updatedAt, Self.date(4))
+    XCTAssertEqual(store.room(id: "room-1")?.unreadCount, 1)
+  }
+
+  @MainActor
+  func testIncomingRealtimeMessageDoesNotIncrementUnreadForActiveRoom() {
+    let store = InstaChatStore(configuration: Self.testConfiguration())
+    store.setActiveRoom("room-1")
+
+    let incoming = Self.message(
+      id: "incoming-active",
+      roomID: "room-1",
+      senderID: "provider-1",
+      content: "Visible reply",
+      createdAt: Self.date(5)
+    )
+    store.applyRealtimeEvent(.message(incoming))
+
+    XCTAssertEqual(store.room(id: "room-1")?.subtitle, "Visible reply")
+    XCTAssertEqual(store.room(id: "room-1")?.unreadCount, 0)
+  }
+
+  @MainActor
+  func testRoomPreviewCoversLocationImageVideoVoiceAndFileMessages() {
+    let store = InstaChatStore(configuration: Self.testConfiguration())
+    let samples: [(InstaChatMessage, String)] = [
+      (
+        Self.message(
+          id: "location",
+          roomID: "room-location",
+          content: #"{"latitude":30,"longitude":31,"name":"Cairo"}"#,
+          type: .location,
+          createdAt: Self.date(1),
+          location: InstaChatLocation(latitude: 30, longitude: 31, name: "Cairo")
+        ),
+        "Cairo"
+      ),
+      (
+        Self.message(
+          id: "image",
+          roomID: "room-image",
+          content: "",
+          type: .image,
+          createdAt: Self.date(2),
+          attachment: Self.attachment(type: .image, fileName: "photo.png", contentType: "image/png")
+        ),
+        "Photo"
+      ),
+      (
+        Self.message(
+          id: "video",
+          roomID: "room-video",
+          content: "",
+          type: .file,
+          createdAt: Self.date(3),
+          attachment: Self.attachment(type: .video, fileName: "clip.mp4", contentType: "video/mp4")
+        ),
+        "Video"
+      ),
+      (
+        Self.message(
+          id: "voice",
+          roomID: "room-voice",
+          content: "",
+          type: .file,
+          createdAt: Self.date(4),
+          attachment: Self.attachment(type: .audio, fileName: "voice.m4a", contentType: "audio/mp4")
+        ),
+        "Voice note"
+      ),
+      (
+        Self.message(
+          id: "file",
+          roomID: "room-file",
+          content: "",
+          type: .file,
+          createdAt: Self.date(5),
+          attachment: Self.attachment(type: .file, fileName: "contract.pdf", contentType: "application/pdf")
+        ),
+        "File"
+      )
+    ]
+
+    for (message, expectedPreview) in samples {
+      store.append(message, replacingLocalEcho: false)
+      XCTAssertEqual(store.room(id: message.roomID)?.subtitle, expectedPreview)
+    }
+  }
+
   func testMediaPreflightLimitsMatchSDKContract() {
     XCTAssertEqual(MediaPreflight.maxImageSelectionCount, 5)
     XCTAssertEqual(MediaPreflight.maxVideoDuration, 60)
@@ -302,6 +429,50 @@ final class InstaChatContractTests: XCTestCase {
     return [header, payloadString, ""]
       .map { Data($0.utf8).base64URLEncodedString() }
       .joined(separator: ".")
+  }
+
+  private static func testConfiguration() -> InstaChatConfiguration {
+    InstaChatConfiguration(
+      baseURL: URL(string: "https://instachat.instakit.pro")!,
+      token: "token",
+      user: InstaChatUser(id: "user-1", name: "Mostafa")
+    )
+  }
+
+  private static func date(_ seconds: TimeInterval) -> Date {
+    Date(timeIntervalSince1970: seconds)
+  }
+
+  private static func message(
+    id: String,
+    roomID: String,
+    senderID: String = "user-1",
+    content: String,
+    type: InstaChatMessageType = .text,
+    createdAt: Date,
+    attachment: InstaChatAttachment? = nil,
+    location: InstaChatLocation? = nil
+  ) -> InstaChatMessage {
+    InstaChatMessage(
+      id: id,
+      roomID: roomID,
+      senderID: senderID,
+      content: content,
+      type: type,
+      createdAt: createdAt,
+      attachment: attachment,
+      location: location
+    )
+  }
+
+  private static func attachment(type: InstaChatAttachmentType, fileName: String, contentType: String) -> InstaChatAttachment {
+    InstaChatAttachment(
+      id: "attachment-\(fileName)",
+      fileName: fileName,
+      contentType: contentType,
+      type: type,
+      url: URL(string: "https://instachat.instakit.pro/uploads/\(fileName)")!
+    )
   }
 }
 

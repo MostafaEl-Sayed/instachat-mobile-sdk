@@ -60,6 +60,7 @@ struct ChatDetailView: View {
       }
     }
     .task {
+      store.setActiveRoom(room.id)
       guard !didLoad else {
         return
       }
@@ -68,6 +69,9 @@ struct ChatDetailView: View {
       if store.rooms.isEmpty {
         await store.loadRooms()
       }
+    }
+    .onDisappear {
+      store.setActiveRoom(nil)
     }
     .onChange(of: selectedPhoto) { item in
       handlePickedMedia(item)

@@ -48,6 +48,16 @@ Open a specific room directly:
 sdk.chatView(roomID: "room-id", title: "Support")
 ```
 
+If the native app needs to start a chat from a provider ID, keep that call in the host app backend. The expected flow is:
+
+```swift
+let sdk = InstaChat.initialize(baseURL: instaChatBaseURL, token: token, user: user)
+let roomID = try await grandizarBackend.startChat(providerID: "345", token: token)
+sdk.chatView(roomID: roomID, title: "Support")
+```
+
+The SDK intentionally does not call `POST /api/v1/user-app/chats/start` directly because that endpoint belongs to the consuming app backend. After the backend returns `room_id`, all normal chat behavior runs through the SDK.
+
 The provider name/avatar in the chat header is tappable when `onProviderProfileTap` is supplied. The SDK passes the active `InstaChatRoom`, including `providerID`, `providerExternalUserID`, and `providerProfileURL` when the backend provides them.
 
 `InstaChatView(configuration:)` still works for existing consumers, but it is now a legacy compatibility entry point. Prefer `InstaChat.initialize(...)`; the direct configuration view initializer will be formally deprecated in a future release.

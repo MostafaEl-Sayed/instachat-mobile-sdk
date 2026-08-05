@@ -37,6 +37,16 @@ sdk.chatListView()
 sdk.chatView(roomID: "room-id", title: "Support")
 ```
 
+To start from a Grandizar/provider ID, the consuming app should call its own backend first, then pass the returned room to the SDK:
+
+```swift
+let sdk = InstaChat.initialize(baseURL: instaChatBaseURL, token: token, user: user)
+let roomID = try await grandizarBackend.startChat(providerID: "345", token: token)
+sdk.chatView(roomID: roomID, title: "Support")
+```
+
+The SDK owns chat UI, websocket messages, media, voice notes, and location sharing after a `room_id` exists. The consuming app owns app-specific provider routing, such as `POST /api/v1/user-app/chats/start`.
+
 UIKit:
 
 ```swift

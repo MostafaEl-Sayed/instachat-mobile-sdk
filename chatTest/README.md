@@ -18,6 +18,8 @@ For local validation without committing credentials, pass launch environment val
 
 ```sh
 INSTACHAT_TOKEN="<user-jwt>"
+GRANDIZAR_BACKEND_BASE_URL="https://your-grandizar-app-backend.example"
+GRANDIZAR_PROVIDER_ID="345"
 INSTACHAT_AUTO_OPEN_CHAT=1
 ```
 
@@ -25,6 +27,7 @@ INSTACHAT_AUTO_OPEN_CHAT=1
 
 - Native SwiftUI home screen.
 - Editable `baseURL` and `token`.
+- Host-app start-chat flow: Grandizar backend returns `room_id`, then the SDK opens that room.
 - One-button chat launch.
 - SDK-owned photo, video, location, and real voice-note controls.
 - Direct dependency on the local Swift Package product `InstaChatIOS`.
@@ -34,22 +37,21 @@ The integration code is intentionally small:
 ```swift
 import InstaChatIOS
 
-InstaChatView(
-  configuration: InstaChatConfiguration(
-    baseURL: URL(string: "https://instachat.instakit.pro")!,
-    token: token,
-    user: InstaChatUser(id: "user-1", name: "Mostafa")
-  ),
-  onClose: {
-    isShowingChat = false
-  },
-  onProviderProfileTap: { room in
-    openProviderProfile(id: room.providerExternalUserID ?? room.providerID)
-  }
+let sdk = InstaChat.initialize(
+  baseURL: URL(string: "https://instachat.instakit.pro")!,
+  token: token,
+  user: InstaChatUser(id: "user-1", name: "Mostafa")
 )
+
+// Option A: open the SDK chat list.
+sdk.chatListView()
+
+// Option B: host app starts a provider chat first, then opens the returned room.
+let roomID = try await grandizarBackend.startChat(providerID: "345", token: token)
+sdk.chatView(roomID: roomID, title: "Support")
 ```
 
-For production, the native app should inject the authenticated user token from its own login/session flow. The host app only controls presentation state; the SDK renders the close button and calls `onClose` when the user taps it.
+For production, the native app should inject the authenticated user token from its own login/session flow. The host app owns presentation state and any app-backend workflow such as `POST /api/v1/user-app/chats/start`; the SDK renders the close button and handles normal chat once a `room_id` exists.
 
 To integrate from GitHub in another native iOS app, add this Swift Package URL in Xcode:
 

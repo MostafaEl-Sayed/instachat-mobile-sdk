@@ -2,6 +2,8 @@ import Foundation
 
 enum DemoCredentials {
   static let baseURL = "https://instachat.instakit.pro"
+  static let appBackendBaseURL = ""
+  static let providerID = "345"
 
   // Paste a valid user JWT before running the sample against the live backend.
   static let token = ""

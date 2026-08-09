@@ -109,6 +109,8 @@ Failed outgoing messages and their local media are stored by the SDK with iOS fi
 
 Newly recorded voice notes are copied into the authenticated media cache before the local pending upload is released. They can therefore play immediately after the backend echo without waiting for CDN propagation. Remote media downloads retry transient `400`, `404`, rate-limit, server, and connection failures with bounded exponential backoff; playback failures show an explicit Retry control.
 
+Image and video previews are selected by the exact message and attachment identity. Scrolling or SwiftUI row reuse cannot redirect a tap to another media item, and image/video loaders reset whenever the selected URL changes. The complete voice-note row is tappable while playback remains owned by the chat screen, so it continues when its bubble scrolls off screen.
+
 ## Text Links
 
 Text messages automatically detect embedded `http://` and `https://` URLs, including multiline and Arabic/right-to-left messages. Links render with underline styling inside the existing sender/receiver bubble design and open through the standard platform URL opener, so Grandizar universal links such as `/provider-details/{providerId}` can route into the app when iOS supports them, while external links open in Safari, the App Store, or the appropriate app.

@@ -382,6 +382,62 @@ final class InstaChatContractTests: XCTestCase {
   }
 
   @MainActor
+  func testMixedMediaMessagesKeepChronologicalOrderAndAttachmentIdentity() {
+    let store = InstaChatStore(
+      configuration: Self.testConfiguration(),
+      pendingStore: Self.temporaryPendingStore()
+    )
+    let image = Self.message(
+      id: "image-message",
+      roomID: "room-media",
+      content: "photo.jpg",
+      type: .image,
+      createdAt: Self.date(1),
+      attachment: Self.attachment(type: .image, fileName: "photo.jpg", contentType: "image/jpeg")
+    )
+    let voice = Self.message(
+      id: "voice-message",
+      roomID: "room-media",
+      content: "voice.m4a",
+      type: .file,
+      createdAt: Self.date(2),
+      attachment: Self.attachment(type: .audio, fileName: "voice.m4a", contentType: "audio/mp4")
+    )
+    let video = Self.message(
+      id: "video-message",
+      roomID: "room-media",
+      content: "video.mp4",
+      type: .file,
+      createdAt: Self.date(3),
+      attachment: Self.attachment(type: .video, fileName: "video.mp4", contentType: "video/mp4")
+    )
+
+    store.append(video, replacingLocalEcho: false)
+    store.append(image, replacingLocalEcho: false)
+    store.append(voice, replacingLocalEcho: false)
+
+    let messages = store.messages(for: "room-media")
+    XCTAssertEqual(messages.map(\.id), ["image-message", "voice-message", "video-message"])
+    XCTAssertEqual(messages.map { $0.attachment?.type }, [.image, .audio, .video])
+    XCTAssertEqual(messages.map { $0.attachment?.fileName }, ["photo.jpg", "voice.m4a", "video.mp4"])
+  }
+
+  func testMediaPreviewSelectionKeepsExactTappedMessageAndAttachment() {
+    let image = Self.attachment(type: .image, fileName: "first.jpg", contentType: "image/jpeg")
+    let video = Self.attachment(type: .video, fileName: "second.mp4", contentType: "video/mp4")
+    let imageSelection = MediaPreviewSelection(messageID: "message-image", attachment: image)
+    let videoSelection = MediaPreviewSelection(messageID: "message-video", attachment: video)
+
+    XCTAssertNotEqual(imageSelection.id, videoSelection.id)
+    XCTAssertEqual(imageSelection.messageID, "message-image")
+    XCTAssertEqual(imageSelection.attachment.id, image.id)
+    XCTAssertEqual(imageSelection.attachment.url, image.url)
+    XCTAssertEqual(videoSelection.messageID, "message-video")
+    XCTAssertEqual(videoSelection.attachment.id, video.id)
+    XCTAssertEqual(videoSelection.attachment.url, video.url)
+  }
+
+  @MainActor
   func testFailedTextMessageShowsFriendlyErrorAndRetriesWithoutDuplicate() async throws {
     let client = StubInstaChatClient()
     client.textResults = [

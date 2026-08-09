@@ -109,6 +109,8 @@ Failed outgoing messages in the native iOS SDK remain visible with an inline, us
 
 Newly sent native iOS voice notes play from the preserved local recording while the CDN copy propagates. Transient media download failures retry automatically with short exponential backoff and then present a clear playback Retry control if the media is still unavailable.
 
+Native iOS image and video previews retain the exact tapped message/attachment identity even when the chat list recycles rows. Media loading is keyed by URL, mixed image/video/voice histories remain chronologically ordered, and the full voice-note row is available as the playback target.
+
 ## With Host Adapters
 
 ```tsx

@@ -21,6 +21,7 @@ struct ChatDetailView: View {
   @State private var isAttachmentPanelVisible = false
   @State private var isPhotoPickerPresented = false
   @State private var isVideoPickerPresented = false
+  @State private var mediaPreviewSelection: MediaPreviewSelection?
   @StateObject private var voicePlaybackController = VoiceNotePlaybackController()
   #if canImport(CoreLocation)
   @StateObject private var currentLocationProvider = CurrentLocationProvider()
@@ -110,6 +111,13 @@ struct ChatDetailView: View {
     } message: {
       Text(store.errorMessage ?? "Please try again.")
     }
+    .mediaPreviewCover(item: $mediaPreviewSelection) { selection in
+      MediaPreviewScreen(
+        attachment: selection.attachment,
+        mediaAuthToken: store.configuration.token
+      )
+      .id(selection.id)
+    }
   }
 
   private var providerTitle: some View {
@@ -155,6 +163,12 @@ struct ChatDetailView: View {
                 Task {
                   await store.retryMessage(messageID: message.id)
                 }
+              },
+              onPreviewAttachment: { attachment in
+                mediaPreviewSelection = MediaPreviewSelection(
+                  messageID: message.id,
+                  attachment: attachment
+                )
               }
             )
               .id(message.id)
@@ -737,6 +751,7 @@ private struct MessageBubbleView: View {
   @ObservedObject var voicePlaybackController: VoiceNotePlaybackController
   var deliveryState: OutgoingMessageDeliveryState?
   var onRetry: () -> Void
+  var onPreviewAttachment: (InstaChatAttachment) -> Void
 
   var body: some View {
     HStack(alignment: .bottom) {
@@ -810,7 +825,8 @@ private struct MessageBubbleView: View {
           attachment: attachment,
           isCurrentUser: isCurrentUser,
           mediaAuthToken: mediaAuthToken,
-          voicePlaybackController: voicePlaybackController
+          voicePlaybackController: voicePlaybackController,
+          onPreview: onPreviewAttachment
         )
       } else {
         LinkedMessageText(content: message.content, isCurrentUser: isCurrentUser)
@@ -893,27 +909,30 @@ private struct AttachmentBubble: View {
   var isCurrentUser: Bool
   var mediaAuthToken: String
   @ObservedObject var voicePlaybackController: VoiceNotePlaybackController
-
-  @State private var isPreviewPresented = false
+  var onPreview: (InstaChatAttachment) -> Void
 
   var body: some View {
     Group {
       if attachment.type == .image {
         Button {
-          isPreviewPresented = true
+          onPreview(attachment)
         } label: {
           imageBubble
             .bubbleStyle(isCurrentUser: isCurrentUser)
         }
         .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .accessibilityLabel("Open image \(attachment.fileName)")
       } else if attachment.type == .video {
         Button {
-          isPreviewPresented = true
+          onPreview(attachment)
         } label: {
           fileBubble(systemImage: "play.rectangle.fill", title: attachment.fileName, subtitle: "Tap to preview")
             .bubbleStyle(isCurrentUser: isCurrentUser)
         }
         .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .accessibilityLabel("Play video \(attachment.fileName)")
       } else if attachment.type == .audio {
         VoiceNoteBubble(
           attachment: attachment,
@@ -926,9 +945,6 @@ private struct AttachmentBubble: View {
         fileBubble(systemImage: "doc.fill", title: attachment.fileName, subtitle: attachment.contentType)
           .bubbleStyle(isCurrentUser: isCurrentUser)
       }
-    }
-    .mediaPreviewCover(isPresented: $isPreviewPresented) {
-      MediaPreviewScreen(attachment: attachment, mediaAuthToken: mediaAuthToken)
     }
   }
 
@@ -1009,10 +1025,10 @@ private struct VoiceNoteBubble: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 7) {
-      HStack(spacing: 10) {
-        Button {
-          playbackController.toggle(attachment: attachment, authToken: mediaAuthToken)
-        } label: {
+      Button {
+        playbackController.toggle(attachment: attachment, authToken: mediaAuthToken)
+      } label: {
+        HStack(spacing: 10) {
           ZStack {
             if isLoading {
               ProgressView()
@@ -1026,18 +1042,19 @@ private struct VoiceNoteBubble: View {
           .foregroundStyle(isCurrentUser ? Color.accentColor : .white)
           .frame(width: 34, height: 34)
           .background(isCurrentUser ? .white : Color.accentColor, in: Circle())
+
+          StaticWaveformView(seed: attachment.id)
+            .frame(width: 150, height: 30)
+            .foregroundStyle(isCurrentUser ? .white.opacity(0.86) : .secondary)
+
+          Image(systemName: "waveform")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(isCurrentUser ? .white.opacity(0.8) : .secondary)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(playbackAccessibilityLabel)
-
-        StaticWaveformView(seed: attachment.id)
-          .frame(width: 150, height: 30)
-          .foregroundStyle(isCurrentUser ? .white.opacity(0.86) : .secondary)
-
-        Image(systemName: "waveform")
-          .font(.system(size: 15, weight: .semibold))
-          .foregroundStyle(isCurrentUser ? .white.opacity(0.8) : .secondary)
+        .contentShape(Rectangle())
       }
+      .buttonStyle(.plain)
+      .accessibilityLabel(playbackAccessibilityLabel)
 
       if playbackError != nil {
         HStack(spacing: 8) {
@@ -1315,28 +1332,36 @@ private struct AuthenticatedRemoteImage: View {
     }
     .clipped()
     .task(id: url) {
-      await loadImage()
+      image = nil
+      didFail = false
+      await loadImage(requestedURL: url)
     }
   }
 
-  private func loadImage() async {
-    if url.isFileURL {
-      let localURL = url
+  private func loadImage(requestedURL: URL) async {
+    if requestedURL.isFileURL {
+      let localURL = requestedURL
       let loadedImage = await Task.detached(priority: .utility) {
         SendablePlatformImage(PlatformImage(contentsOfFile: localURL.path))
       }.value
+      guard !Task.isCancelled else {
+        return
+      }
       image = loadedImage.value
       didFail = loadedImage.value == nil
       return
     }
 
-    var request = URLRequest(url: url)
+    var request = URLRequest(url: requestedURL)
     request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
 
     do {
       let (data, _) = try await URLSession.shared.data(for: request)
       guard let loadedImage = PlatformImage(data: data) else {
         didFail = true
+        return
+      }
+      guard !Task.isCancelled else {
         return
       }
       image = loadedImage
@@ -1397,17 +1422,24 @@ private struct VideoPreviewPlayer: View {
         .padding(20)
       }
     }
-      .task {
-        guard player == nil else {
-          return
-        }
+      .task(id: url) {
+        player?.pause()
+        player = nil
+        isLoading = true
+        playbackError = nil
         do {
           let localURL = try await AuthenticatedMediaCache.shared.localFileURL(for: url, authToken: authToken)
+          guard !Task.isCancelled else {
+            return
+          }
           let player = AVPlayer(url: localURL)
           self.player = player
           isLoading = false
           player.play()
         } catch {
+          guard !Task.isCancelled else {
+            return
+          }
           isLoading = false
           playbackError = error.localizedDescription
         }
@@ -1737,15 +1769,6 @@ private struct TypingIndicatorView: View {
 }
 
 private extension View {
-  @ViewBuilder
-  func mediaPreviewCover<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {
-    #if os(iOS)
-      fullScreenCover(isPresented: isPresented, content: content)
-    #else
-      sheet(isPresented: isPresented, content: content)
-    #endif
-  }
-
   func bubbleStyle(isCurrentUser: Bool) -> some View {
     padding(.horizontal, 13)
       .padding(.vertical, 9)
@@ -1757,5 +1780,26 @@ private extension View {
     padding(.horizontal, 13)
       .padding(.vertical, 9)
       .background(isCurrentUser ? Color.accentColor : Color.gray.opacity(0.14), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+  }
+
+  @ViewBuilder
+  func mediaPreviewCover<Item: Identifiable, Content: View>(
+    item: Binding<Item?>,
+    @ViewBuilder content: @escaping (Item) -> Content
+  ) -> some View {
+    #if os(iOS)
+      fullScreenCover(item: item, content: content)
+    #else
+      sheet(item: item, content: content)
+    #endif
+  }
+}
+
+struct MediaPreviewSelection: Identifiable, Hashable {
+  var messageID: String
+  var attachment: InstaChatAttachment
+
+  var id: String {
+    [messageID, attachment.id, attachment.url.absoluteString].joined(separator: "|")
   }
 }

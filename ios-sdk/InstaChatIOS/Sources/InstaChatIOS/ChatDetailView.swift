@@ -982,6 +982,9 @@ private struct VoiceNoteBubble: View {
     if isPlaying {
       return "pause.fill"
     }
+    if playbackError != nil {
+      return "arrow.clockwise"
+    }
     if isCached {
       return "play.fill"
     }
@@ -995,6 +998,9 @@ private struct VoiceNoteBubble: View {
     if isPlaying {
       return "Pause voice note"
     }
+    if playbackError != nil {
+      return "Retry voice note"
+    }
     if isCached {
       return "Play voice note"
     }
@@ -1002,41 +1008,58 @@ private struct VoiceNoteBubble: View {
   }
 
   var body: some View {
-    HStack(spacing: 10) {
-      Button {
-        playbackController.toggle(attachment: attachment, authToken: mediaAuthToken)
-      } label: {
-        ZStack {
-          if isLoading {
-            ProgressView()
-              .controlSize(.small)
-              .tint(isCurrentUser ? Color.accentColor : .white)
-          } else {
-            Image(systemName: playbackIconName)
-              .font(.system(size: isCached || isPlaying ? 14 : 17, weight: .bold))
+    VStack(alignment: .leading, spacing: 7) {
+      HStack(spacing: 10) {
+        Button {
+          playbackController.toggle(attachment: attachment, authToken: mediaAuthToken)
+        } label: {
+          ZStack {
+            if isLoading {
+              ProgressView()
+                .controlSize(.small)
+                .tint(isCurrentUser ? Color.accentColor : .white)
+            } else {
+              Image(systemName: playbackIconName)
+                .font(.system(size: isCached || isPlaying ? 14 : 17, weight: .bold))
+            }
           }
+          .foregroundStyle(isCurrentUser ? Color.accentColor : .white)
+          .frame(width: 34, height: 34)
+          .background(isCurrentUser ? .white : Color.accentColor, in: Circle())
         }
-        .foregroundStyle(isCurrentUser ? Color.accentColor : .white)
-        .frame(width: 34, height: 34)
-        .background(isCurrentUser ? .white : Color.accentColor, in: Circle())
-      }
-      .buttonStyle(.plain)
-      .accessibilityLabel(playbackAccessibilityLabel)
+        .buttonStyle(.plain)
+        .accessibilityLabel(playbackAccessibilityLabel)
 
-      StaticWaveformView(seed: attachment.id)
-        .frame(width: 150, height: 30)
-        .foregroundStyle(isCurrentUser ? .white.opacity(0.86) : .secondary)
+        StaticWaveformView(seed: attachment.id)
+          .frame(width: 150, height: 30)
+          .foregroundStyle(isCurrentUser ? .white.opacity(0.86) : .secondary)
 
-      Image(systemName: "waveform")
-        .font(.system(size: 15, weight: .semibold))
-        .foregroundStyle(isCurrentUser ? .white.opacity(0.75) : .secondary)
-    }
-    .overlay(alignment: .bottomLeading) {
-      if let playbackError {
-        Text(playbackError)
-          .font(.caption2)
+        Image(systemName: "waveform")
+          .font(.system(size: 15, weight: .semibold))
           .foregroundStyle(isCurrentUser ? .white.opacity(0.8) : .secondary)
-          .offset(y: 18)
+      }
+
+      if playbackError != nil {
+        HStack(spacing: 8) {
+          Text("Voice note isn't ready yet.")
+            .font(.caption2)
+            .foregroundStyle(isCurrentUser ? .white.opacity(0.82) : .secondary)
+
+          Button {
+            playbackController.toggle(attachment: attachment, authToken: mediaAuthToken)
+          } label: {
+            Label("Retry", systemImage: "arrow.clockwise")
+              .font(.caption.weight(.semibold))
+              .padding(.horizontal, 10)
+              .frame(minHeight: 34)
+              .background(
+                isCurrentUser ? Color.white.opacity(0.16) : Color.accentColor.opacity(0.12),
+                in: Capsule()
+              )
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel("Retry voice note playback")
+        }
       }
     }
     .frame(maxWidth: 250, alignment: .leading)
@@ -1195,8 +1218,8 @@ private final class VoiceNotePlaybackController: ObservableObject {
     #endif
   }
 
-  private func fail(attachmentID: String, error: Error) {
-    fail(attachmentID: attachmentID, message: error.localizedDescription)
+  private func fail(attachmentID: String, error _: Error) {
+    fail(attachmentID: attachmentID, message: "Voice note playback failed")
   }
 
   private func fail(attachmentID: String, message: String) {
@@ -1396,10 +1419,11 @@ private struct VideoPreviewPlayer: View {
   }
 }
 
-private actor AuthenticatedMediaCache {
+actor AuthenticatedMediaCache {
   static let shared = AuthenticatedMediaCache()
 
   private var inFlight: [URL: Task<URL, Error>] = [:]
+  private static let maximumDownloadAttempts = 4
 
   func cachedFileExists(for remoteURL: URL, fileName: String? = nil) async -> Bool {
     if remoteURL.isFileURL {
@@ -1414,7 +1438,30 @@ private actor AuthenticatedMediaCache {
     }
   }
 
-  func localFileURL(for remoteURL: URL, authToken: String, fileName: String? = nil) async throws -> URL {
+  func storeLocalFile(at sourceURL: URL, for remoteURL: URL, fileName: String? = nil) async throws {
+    guard sourceURL.isFileURL, !remoteURL.isFileURL else {
+      return
+    }
+
+    let destinationURL = try cacheURL(for: remoteURL, fileName: fileName)
+    let parentDirectory = destinationURL.deletingLastPathComponent()
+    try FileManager.default.createDirectory(at: parentDirectory, withIntermediateDirectories: true)
+    let stagedURL = parentDirectory
+      .appendingPathComponent(UUID().uuidString)
+      .appendingPathExtension(destinationURL.pathExtension)
+    try FileManager.default.copyItem(at: sourceURL, to: stagedURL)
+    if FileManager.default.fileExists(atPath: destinationURL.path) {
+      try FileManager.default.removeItem(at: destinationURL)
+    }
+    try FileManager.default.moveItem(at: stagedURL, to: destinationURL)
+  }
+
+  func localFileURL(
+    for remoteURL: URL,
+    authToken: String,
+    fileName: String? = nil,
+    session: URLSession = .shared
+  ) async throws -> URL {
     if remoteURL.isFileURL {
       return remoteURL
     }
@@ -1429,13 +1476,11 @@ private actor AuthenticatedMediaCache {
     }
 
     let task = Task<URL, Error> {
-      var request = URLRequest(url: remoteURL)
-      request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
-      let (temporaryURL, response) = try await URLSession.shared.download(for: request)
-
-      if let httpResponse = response as? HTTPURLResponse, !(200..<300).contains(httpResponse.statusCode) {
-        throw MediaDownloadError.httpStatus(httpResponse.statusCode)
-      }
+      let temporaryURL = try await Self.downloadWithRetry(
+        remoteURL: remoteURL,
+        authToken: authToken,
+        session: session
+      )
 
       let parentDirectory = destinationURL.deletingLastPathComponent()
       try FileManager.default.createDirectory(at: parentDirectory, withIntermediateDirectories: true)
@@ -1457,6 +1502,51 @@ private actor AuthenticatedMediaCache {
     }
   }
 
+  private static func downloadWithRetry(
+    remoteURL: URL,
+    authToken: String,
+    session: URLSession
+  ) async throws -> URL {
+    var latestError: Error = MediaDownloadError.unavailable
+
+    for attempt in 0..<maximumDownloadAttempts {
+      do {
+        var request = URLRequest(url: remoteURL)
+        request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        let (temporaryURL, response) = try await session.download(for: request)
+
+        if let httpResponse = response as? HTTPURLResponse,
+           !(200..<300).contains(httpResponse.statusCode) {
+          throw MediaDownloadError.httpStatus(httpResponse.statusCode)
+        }
+        return temporaryURL
+      } catch {
+        latestError = error
+        guard attempt < maximumDownloadAttempts - 1, isTransient(error) else {
+          throw error
+        }
+        let delayNanoseconds = UInt64(250_000_000 * (1 << attempt))
+        try await Task.sleep(nanoseconds: delayNanoseconds)
+      }
+    }
+
+    throw latestError
+  }
+
+  private static func isTransient(_ error: Error) -> Bool {
+    if let mediaError = error as? MediaDownloadError,
+       case let .httpStatus(statusCode) = mediaError {
+      return statusCode == 400 || statusCode == 404 || statusCode == 408 ||
+        statusCode == 425 || statusCode == 429 || (500...599).contains(statusCode)
+    }
+
+    guard let urlError = error as? URLError else {
+      return false
+    }
+    return [.timedOut, .networkConnectionLost, .cannotConnectToHost, .notConnectedToInternet]
+      .contains(urlError.code)
+  }
+
   private func cacheURL(for remoteURL: URL, fileName: String?) throws -> URL {
     let cacheDirectory = try FileManager.default.url(
       for: .cachesDirectory,
@@ -1475,13 +1565,16 @@ private actor AuthenticatedMediaCache {
   }
 }
 
-private enum MediaDownloadError: LocalizedError {
+enum MediaDownloadError: LocalizedError {
   case httpStatus(Int)
+  case unavailable
 
   var errorDescription: String? {
     switch self {
     case let .httpStatus(statusCode):
       return "Media download failed (\(statusCode))."
+    case .unavailable:
+      return "Media is not available yet."
     }
   }
 }

@@ -107,6 +107,8 @@ Text links in the native iOS SDK:
 
 Failed outgoing messages in the native iOS SDK remain visible with an inline, user-friendly explanation and Retry button. Text and media retry state survives navigating away or recreating the SDK view, and late backend echoes reconcile with the local bubble rather than creating duplicates.
 
+Newly sent native iOS voice notes play from the preserved local recording while the CDN copy propagates. Transient media download failures retry automatically with short exponential backoff and then present a clear playback Retry control if the media is still unavailable.
+
 ## With Host Adapters
 
 ```tsx

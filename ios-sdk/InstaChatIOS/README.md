@@ -107,6 +107,8 @@ Text, photo, video, voice-note, file, and location messages show an inline sendi
 
 Failed outgoing messages and their local media are stored by the SDK with iOS file protection. They remain retryable after navigating back to the room list, reopening the chat, or recreating the SDK view. A late backend echo replaces the local message and clears its retry state, preventing duplicate bubbles.
 
+Newly recorded voice notes are copied into the authenticated media cache before the local pending upload is released. They can therefore play immediately after the backend echo without waiting for CDN propagation. Remote media downloads retry transient `400`, `404`, rate-limit, server, and connection failures with bounded exponential backoff; playback failures show an explicit Retry control.
+
 ## Text Links
 
 Text messages automatically detect embedded `http://` and `https://` URLs, including multiline and Arabic/right-to-left messages. Links render with underline styling inside the existing sender/receiver bubble design and open through the standard platform URL opener, so Grandizar universal links such as `/provider-details/{providerId}` can route into the app when iOS supports them, while external links open in Safari, the App Store, or the appropriate app.

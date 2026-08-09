@@ -503,6 +503,72 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertNil(store.deliveryState(for: localMessage.id))
   }
 
+  @MainActor
+  func testVoiceUploadBackendEchoAndImmediatePlaybackUsesLocalCache() async throws {
+    let remoteURL = URL(string: "https://instachat.instakit.pro/uploads/voice-\(UUID().uuidString).m4a")!
+    let uploadedAttachment = InstaChatAttachment(
+      id: "uploaded-voice",
+      fileName: "voice-note.m4a",
+      contentType: "audio/mp4",
+      type: .audio,
+      url: remoteURL
+    )
+    let client = StubInstaChatClient()
+    client.uploadResults = [.success(uploadedAttachment)]
+    client.attachmentSendResults = [.success(())]
+    let store = InstaChatStore(
+      configuration: Self.testConfiguration(),
+      client: client,
+      pendingStore: Self.temporaryPendingStore()
+    )
+    let recordingData = Data("recorded-voice-note".utf8)
+    let recordingURL = try Self.temporaryMediaFile(name: "voice-note.m4a", data: recordingData)
+
+    await store.sendAttachment(fileURL: recordingURL, roomID: "room-voice", contentType: "audio/mp4")
+    let localMessage = try XCTUnwrap(store.messages(for: "room-voice").first)
+    let backendEcho = Self.message(
+      id: "backend-voice",
+      roomID: "room-voice",
+      senderID: "user-1",
+      content: uploadedAttachment.fileName,
+      type: .file,
+      createdAt: localMessage.createdAt.addingTimeInterval(0.1),
+      attachment: uploadedAttachment
+    )
+    store.applyRealtimeEvent(.message(backendEcho))
+
+    StubMediaURLProtocol.reset(statusCodes: [500])
+    let mediaSession = Self.mediaTestSession()
+    defer { mediaSession.invalidateAndCancel() }
+    let cachedURL = try await AuthenticatedMediaCache.shared.localFileURL(
+      for: remoteURL,
+      authToken: "token",
+      fileName: uploadedAttachment.fileName,
+      session: mediaSession
+    )
+
+    XCTAssertEqual(store.messages(for: "room-voice").map(\.id), ["backend-voice"])
+    XCTAssertEqual(try Data(contentsOf: cachedURL), recordingData)
+    XCTAssertEqual(StubMediaURLProtocol.requestCount, 0, "Immediate playback must not download the new voice note")
+  }
+
+  func testTransientMediaDownloadRetriesWithExponentialBackoff() async throws {
+    let remoteURL = URL(string: "https://cdn.example.com/voice-\(UUID().uuidString).m4a")!
+    StubMediaURLProtocol.reset(statusCodes: [400, 404, 200], responseData: Data("cdn-audio".utf8))
+    let mediaSession = Self.mediaTestSession()
+    defer { mediaSession.invalidateAndCancel() }
+
+    let localURL = try await AuthenticatedMediaCache.shared.localFileURL(
+      for: remoteURL,
+      authToken: "token",
+      fileName: "voice-note.m4a",
+      session: mediaSession
+    )
+
+    XCTAssertEqual(StubMediaURLProtocol.requestCount, 3)
+    XCTAssertEqual(try Data(contentsOf: localURL), Data("cdn-audio".utf8))
+  }
+
   func testMediaPreflightLimitsMatchSDKContract() {
     XCTAssertEqual(MediaPreflight.maxImageSelectionCount, 5)
     XCTAssertEqual(MediaPreflight.maxVideoDuration, 60)
@@ -605,11 +671,17 @@ final class InstaChatContractTests: XCTestCase {
     )
   }
 
-  private static func temporaryMediaFile(name: String) throws -> URL {
+  private static func temporaryMediaFile(name: String, data: Data = Data("test-media".utf8)) throws -> URL {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("InstaChatTests-\(UUID().uuidString)-\(name)")
-    try Data("test-media".utf8).write(to: url, options: .atomic)
+    try data.write(to: url, options: .atomic)
     return url
+  }
+
+  private static func mediaTestSession() -> URLSession {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubMediaURLProtocol.self]
+    return URLSession(configuration: configuration)
   }
 }
 
@@ -662,6 +734,54 @@ private final class StubInstaChatClient: InstaChatClientProtocol, @unchecked Sen
   }
 
   func disconnect() {}
+}
+
+private final class StubMediaURLProtocol: URLProtocol, @unchecked Sendable {
+  private static let lock = NSLock()
+  private static var statusCodes: [Int] = []
+  private static var data = Data()
+  private static var count = 0
+
+  static var requestCount: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return count
+  }
+
+  static func reset(statusCodes: [Int], responseData: Data = Data()) {
+    lock.lock()
+    self.statusCodes = statusCodes
+    data = responseData
+    count = 0
+    lock.unlock()
+  }
+
+  override class func canInit(with request: URLRequest) -> Bool { true }
+
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+  override func startLoading() {
+    Self.lock.lock()
+    let index = Self.count
+    Self.count += 1
+    let statusCode = Self.statusCodes.indices.contains(index) ? Self.statusCodes[index] : 500
+    let responseData = Self.data
+    Self.lock.unlock()
+
+    let response = HTTPURLResponse(
+      url: request.url!,
+      statusCode: statusCode,
+      httpVersion: "HTTP/1.1",
+      headerFields: ["Content-Type": "audio/mp4"]
+    )!
+    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+    if (200..<300).contains(statusCode) {
+      client?.urlProtocol(self, didLoad: responseData)
+    }
+    client?.urlProtocolDidFinishLoading(self)
+  }
+
+  override func stopLoading() {}
 }
 
 private extension Data {

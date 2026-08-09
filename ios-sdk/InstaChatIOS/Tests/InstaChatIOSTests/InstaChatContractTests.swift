@@ -381,6 +381,128 @@ final class InstaChatContractTests: XCTestCase {
     }
   }
 
+  @MainActor
+  func testFailedTextMessageShowsFriendlyErrorAndRetriesWithoutDuplicate() async throws {
+    let client = StubInstaChatClient()
+    client.textResults = [
+      .failure(URLError(.notConnectedToInternet)),
+      .success(())
+    ]
+    let store = InstaChatStore(
+      configuration: Self.testConfiguration(),
+      client: client,
+      pendingStore: Self.temporaryPendingStore()
+    )
+
+    await store.sendText("Hello", roomID: "room-1")
+
+    let message = try XCTUnwrap(store.messages(for: "room-1").first)
+    guard case let .failed(failure) = store.deliveryState(for: message.id) else {
+      return XCTFail("Expected failed delivery state")
+    }
+    XCTAssertEqual(failure.message, "No internet connection. Reconnect, then retry your message.")
+    XCTAssertNil(store.errorMessage)
+    XCTAssertEqual(client.sendTextCallCount, 1)
+
+    await store.retryMessage(messageID: message.id)
+
+    XCTAssertEqual(client.sendTextCallCount, 2)
+    XCTAssertNil(store.deliveryState(for: message.id))
+    XCTAssertEqual(store.messages(for: "room-1").count, 1)
+  }
+
+  @MainActor
+  func testVideoRetryReusesSuccessfulUploadAndDoesNotDuplicateBubble() async throws {
+    let client = StubInstaChatClient()
+    client.uploadResults = [.success(Self.attachment(type: .video, fileName: "clip.mp4", contentType: "video/mp4"))]
+    client.attachmentSendResults = [
+      .failure(InstaChatError.websocketClosed),
+      .success(())
+    ]
+    let pendingStore = Self.temporaryPendingStore()
+    let store = InstaChatStore(configuration: Self.testConfiguration(), client: client, pendingStore: pendingStore)
+    let videoURL = try Self.temporaryMediaFile(name: "clip.mp4")
+
+    await store.sendAttachment(fileURL: videoURL, roomID: "room-video", contentType: "video/mp4")
+
+    let message = try XCTUnwrap(store.messages(for: "room-video").first)
+    guard case let .failed(failure) = store.deliveryState(for: message.id) else {
+      return XCTFail("Expected failed video delivery state")
+    }
+    XCTAssertEqual(failure.message, "Chat is reconnecting. Retry your video in a moment.")
+    XCTAssertEqual(client.uploadCallCount, 1)
+    XCTAssertEqual(client.sendAttachmentCallCount, 1)
+
+    await store.retryMessage(messageID: message.id)
+
+    XCTAssertEqual(client.uploadCallCount, 1, "Retry must reuse the uploaded attachment")
+    XCTAssertEqual(client.sendAttachmentCallCount, 2)
+    XCTAssertNil(store.deliveryState(for: message.id))
+    XCTAssertEqual(store.messages(for: "room-video").count, 1)
+  }
+
+  @MainActor
+  func testFailedVoiceNoteRestoresAfterReopeningAndCanRetry() async throws {
+    let pendingStore = Self.temporaryPendingStore()
+    let failingClient = StubInstaChatClient()
+    failingClient.uploadResults = [.failure(URLError(.networkConnectionLost))]
+    let firstStore = InstaChatStore(
+      configuration: Self.testConfiguration(),
+      client: failingClient,
+      pendingStore: pendingStore
+    )
+    let voiceURL = try Self.temporaryMediaFile(name: "voice-note.m4a")
+
+    await firstStore.sendAttachment(fileURL: voiceURL, roomID: "room-voice", contentType: "audio/mp4")
+    let failedMessageID = try XCTUnwrap(firstStore.messages(for: "room-voice").first?.id)
+
+    let retryClient = StubInstaChatClient()
+    retryClient.uploadResults = [.success(Self.attachment(type: .audio, fileName: "voice-note.m4a", contentType: "audio/mp4"))]
+    retryClient.attachmentSendResults = [.success(())]
+    let reopenedStore = InstaChatStore(
+      configuration: Self.testConfiguration(),
+      client: retryClient,
+      pendingStore: pendingStore
+    )
+
+    XCTAssertEqual(reopenedStore.messages(for: "room-voice").count, 1)
+    guard case .failed = reopenedStore.deliveryState(for: failedMessageID) else {
+      return XCTFail("Expected the failed voice note to be restored")
+    }
+
+    await reopenedStore.retryMessage(messageID: failedMessageID)
+
+    XCTAssertEqual(retryClient.uploadCallCount, 1)
+    XCTAssertEqual(retryClient.sendAttachmentCallCount, 1)
+    XCTAssertNil(reopenedStore.deliveryState(for: failedMessageID))
+    XCTAssertEqual(reopenedStore.messages(for: "room-voice").count, 1)
+  }
+
+  @MainActor
+  func testBackendEchoReplacesFailedLocalMessageAndClearsRetryState() async throws {
+    let client = StubInstaChatClient()
+    client.textResults = [.failure(InstaChatError.websocketClosed)]
+    let store = InstaChatStore(
+      configuration: Self.testConfiguration(),
+      client: client,
+      pendingStore: Self.temporaryPendingStore()
+    )
+    await store.sendText("Delivered despite response failure", roomID: "room-1")
+    let localMessage = try XCTUnwrap(store.messages(for: "room-1").first)
+
+    let serverMessage = Self.message(
+      id: "server-message",
+      roomID: "room-1",
+      senderID: "user-1",
+      content: localMessage.content,
+      createdAt: localMessage.createdAt.addingTimeInterval(1)
+    )
+    store.applyRealtimeEvent(.message(serverMessage))
+
+    XCTAssertEqual(store.messages(for: "room-1").map(\.id), ["server-message"])
+    XCTAssertNil(store.deliveryState(for: localMessage.id))
+  }
+
   func testMediaPreflightLimitsMatchSDKContract() {
     XCTAssertEqual(MediaPreflight.maxImageSelectionCount, 5)
     XCTAssertEqual(MediaPreflight.maxVideoDuration, 60)
@@ -474,6 +596,72 @@ final class InstaChatContractTests: XCTestCase {
       url: URL(string: "https://instachat.instakit.pro/uploads/\(fileName)")!
     )
   }
+
+  private static func temporaryPendingStore() -> PendingOutgoingMessageStore {
+    PendingOutgoingMessageStore(
+      fileURL: FileManager.default.temporaryDirectory
+        .appendingPathComponent("InstaChatTests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("pending.json")
+    )
+  }
+
+  private static func temporaryMediaFile(name: String) throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("InstaChatTests-\(UUID().uuidString)-\(name)")
+    try Data("test-media".utf8).write(to: url, options: .atomic)
+    return url
+  }
+}
+
+private final class StubInstaChatClient: InstaChatClientProtocol, @unchecked Sendable {
+  var textResults: [Result<Void, Error>] = []
+  var uploadResults: [Result<InstaChatAttachment, Error>] = []
+  var attachmentSendResults: [Result<Void, Error>] = []
+  private(set) var sendTextCallCount = 0
+  private(set) var uploadCallCount = 0
+  private(set) var sendAttachmentCallCount = 0
+
+  func getRooms() async throws -> [InstaChatRoom] { [] }
+
+  func getMessages(roomID: String, limit: Int?, cursor: String?) async throws -> InstaChatMessagesPage {
+    InstaChatMessagesPage(messages: [], nextCursor: nil, hasMore: false)
+  }
+
+  func uploadAttachment(fileURL: URL, roomID: String, contentType: String?) async throws -> InstaChatAttachment {
+    uploadCallCount += 1
+    guard !uploadResults.isEmpty else {
+      throw InstaChatError.invalidResponse
+    }
+    return try uploadResults.removeFirst().get()
+  }
+
+  func sendText(_ text: String, roomID: String) async throws {
+    sendTextCallCount += 1
+    guard !textResults.isEmpty else {
+      return
+    }
+    try textResults.removeFirst().get()
+  }
+
+  func sendLocation(_ location: InstaChatLocation, roomID: String) async throws {}
+
+  func sendAttachment(_ attachment: InstaChatAttachment, text: String, roomID: String) async throws {
+    sendAttachmentCallCount += 1
+    guard !attachmentSendResults.isEmpty else {
+      return
+    }
+    try attachmentSendResults.removeFirst().get()
+  }
+
+  func sendTyping(roomID: String, isTyping: Bool) async throws {}
+
+  func realtimeEvents() -> AsyncStream<InstaChatRealtimeEvent> {
+    AsyncStream { continuation in
+      continuation.finish()
+    }
+  }
+
+  func disconnect() {}
 }
 
 private extension Data {

@@ -101,6 +101,12 @@ Location sharing is handled inside the SDK. When the user taps Location, the SDK
 - Videos must be 60 seconds or shorter.
 - Large valid videos are compressed before upload when possible. Very large videos are rejected before upload so the UI does not break during backend upload.
 
+## Failed Sends And Retry
+
+Text, photo, video, voice-note, file, and location messages show an inline sending state. If delivery fails, the message remains in the conversation with a clear explanation and a Retry button instead of showing a raw networking alert.
+
+Failed outgoing messages and their local media are stored by the SDK with iOS file protection. They remain retryable after navigating back to the room list, reopening the chat, or recreating the SDK view. A late backend echo replaces the local message and clears its retry state, preventing duplicate bubbles.
+
 ## Text Links
 
 Text messages automatically detect embedded `http://` and `https://` URLs, including multiline and Arabic/right-to-left messages. Links render with underline styling inside the existing sender/receiver bubble design and open through the standard platform URL opener, so Grandizar universal links such as `/provider-details/{providerId}` can route into the app when iOS supports them, while external links open in Safari, the App Store, or the appropriate app.

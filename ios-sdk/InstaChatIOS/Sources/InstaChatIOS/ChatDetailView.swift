@@ -96,6 +96,20 @@ struct ChatDetailView: View {
     .photosPicker(isPresented: $isPhotoPickerPresented, selection: $selectedPhoto, matching: .images)
     .photosPicker(isPresented: $isVideoPickerPresented, selection: $selectedVideo, matching: .videos)
     #endif
+    .alert("Unable to Complete Action", isPresented: Binding(
+      get: { store.errorMessage != nil },
+      set: { isPresented in
+        if !isPresented {
+          store.dismissError()
+        }
+      }
+    )) {
+      Button("OK") {
+        store.dismissError()
+      }
+    } message: {
+      Text(store.errorMessage ?? "Please try again.")
+    }
   }
 
   private var providerTitle: some View {
@@ -135,7 +149,13 @@ struct ChatDetailView: View {
               message: message,
               isCurrentUser: message.senderID == store.configuration.user.id,
               mediaAuthToken: store.configuration.token,
-              voicePlaybackController: voicePlaybackController
+              voicePlaybackController: voicePlaybackController,
+              deliveryState: store.deliveryState(for: message.id),
+              onRetry: {
+                Task {
+                  await store.retryMessage(messageID: message.id)
+                }
+              }
             )
               .id(message.id)
           }
@@ -715,6 +735,8 @@ private struct MessageBubbleView: View {
   var isCurrentUser: Bool
   var mediaAuthToken: String
   @ObservedObject var voicePlaybackController: VoiceNotePlaybackController
+  var deliveryState: OutgoingMessageDeliveryState?
+  var onRetry: () -> Void
 
   var body: some View {
     HStack(alignment: .bottom) {
@@ -725,13 +747,51 @@ private struct MessageBubbleView: View {
       VStack(alignment: isCurrentUser ? .trailing : .leading, spacing: 5) {
         content
 
-        Text(message.createdAt, style: .time)
-          .font(.caption2)
-          .foregroundStyle(.secondary)
+        deliveryFooter
       }
 
       if !isCurrentUser {
         Spacer(minLength: 60)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var deliveryFooter: some View {
+    VStack(alignment: isCurrentUser ? .trailing : .leading, spacing: 5) {
+      HStack(spacing: 5) {
+        Text(message.createdAt, style: .time)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+
+        if case .sending = deliveryState {
+          ProgressView()
+            .controlSize(.mini)
+          Text("Sending")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+      }
+
+      if case let .failed(failure) = deliveryState {
+        Text(failure.message)
+          .font(.caption2)
+          .foregroundStyle(.red)
+          .multilineTextAlignment(isCurrentUser ? .trailing : .leading)
+          .fixedSize(horizontal: false, vertical: true)
+          .frame(maxWidth: 260, alignment: isCurrentUser ? .trailing : .leading)
+
+        Button(action: onRetry) {
+          Label("Retry", systemImage: "arrow.clockwise")
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 12)
+            .frame(minHeight: 36)
+            .foregroundStyle(.red)
+            .background(Color.red.opacity(0.1), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Retry sending message")
+        .accessibilityHint(failure.message)
       }
     }
   }
@@ -1237,6 +1297,16 @@ private struct AuthenticatedRemoteImage: View {
   }
 
   private func loadImage() async {
+    if url.isFileURL {
+      let localURL = url
+      let loadedImage = await Task.detached(priority: .utility) {
+        SendablePlatformImage(PlatformImage(contentsOfFile: localURL.path))
+      }.value
+      image = loadedImage.value
+      didFail = loadedImage.value == nil
+      return
+    }
+
     var request = URLRequest(url: url)
     request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
 
@@ -1267,6 +1337,14 @@ private typealias PlatformImage = UIImage
 #elseif os(macOS)
 private typealias PlatformImage = NSImage
 #endif
+
+private final class SendablePlatformImage: @unchecked Sendable {
+  let value: PlatformImage?
+
+  init(_ value: PlatformImage?) {
+    self.value = value
+  }
+}
 
 private struct VideoPreviewPlayer: View {
   let url: URL

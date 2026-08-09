@@ -105,6 +105,8 @@ Text links in the native iOS SDK:
 - Links keep the existing bubble alignment and sender/receiver styling, with underline/link color applied to the URL range.
 - Taps use the standard iOS URL opener, including universal-link handoff for supported Grandizar routes such as `/provider-details/{providerId}`.
 
+Failed outgoing messages in the native iOS SDK remain visible with an inline, user-friendly explanation and Retry button. Text and media retry state survives navigating away or recreating the SDK view, and late backend echoes reconcile with the local bubble rather than creating duplicates.
+
 ## With Host Adapters
 
 ```tsx

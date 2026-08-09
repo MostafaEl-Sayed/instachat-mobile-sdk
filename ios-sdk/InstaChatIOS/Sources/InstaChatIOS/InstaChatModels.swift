@@ -94,7 +94,7 @@ public struct InstaChatRoom: Identifiable, Hashable, Sendable {
   }
 }
 
-public struct InstaChatMessage: Identifiable, Hashable, Sendable {
+public struct InstaChatMessage: Identifiable, Hashable, Codable, Sendable {
   public var id: String
   public var roomID: String
   public var senderID: String
@@ -141,7 +141,7 @@ public enum InstaChatMessageType: String, Codable, Hashable, Sendable {
   }
 }
 
-public struct InstaChatAttachment: Identifiable, Hashable, Sendable {
+public struct InstaChatAttachment: Identifiable, Hashable, Codable, Sendable {
   public var id: String
   public var fileName: String
   public var contentType: String

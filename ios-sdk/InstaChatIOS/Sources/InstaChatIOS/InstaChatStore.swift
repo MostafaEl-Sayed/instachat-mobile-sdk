@@ -8,15 +8,24 @@ final class InstaChatStore: ObservableObject {
   @Published private(set) var isLoadingMessages = false
   @Published private(set) var errorMessage: String?
   @Published private(set) var typingRoomIDs: Set<String> = []
+  @Published private(set) var deliveryStatesByMessageID: [String: OutgoingMessageDeliveryState] = [:]
 
   let configuration: InstaChatConfiguration
-  private let client: InstaChatClient
+  private let client: any InstaChatClientProtocol
+  private let pendingStore: PendingOutgoingMessageStore
+  private var pendingOutgoingByMessageID: [String: PendingOutgoingMessage] = [:]
   private var realtimeTask: Task<Void, Never>?
   private var activeRoomID: String?
 
-  init(configuration: InstaChatConfiguration, client: InstaChatClient? = nil) {
+  init(
+    configuration: InstaChatConfiguration,
+    client: (any InstaChatClientProtocol)? = nil,
+    pendingStore: PendingOutgoingMessageStore? = nil
+  ) {
     self.configuration = configuration
     self.client = client ?? InstaChatClient(configuration: configuration)
+    self.pendingStore = pendingStore ?? PendingOutgoingMessageStore(configuration: configuration)
+    restorePendingMessages()
   }
 
   deinit {
@@ -29,11 +38,13 @@ final class InstaChatStore: ObservableObject {
       return
     }
 
-    realtimeTask = Task { [weak self] in
-      guard let self else {
-        return
-      }
-      for await event in self.client.realtimeEvents() {
+    let realtimeClient = client
+    realtimeTask = Task { [weak self, realtimeClient] in
+      for await event in realtimeClient.realtimeEvents() {
+        guard let self else {
+          realtimeClient.disconnect()
+          return
+        }
         self.applyRealtimeEvent(event)
       }
     }
@@ -46,7 +57,7 @@ final class InstaChatStore: ObservableObject {
       let fetchedRooms = try await client.getRooms()
       rooms = mergeRoomList(fetchedRooms)
     } catch {
-      errorMessage = error.localizedDescription
+      errorMessage = InstaChatSendFailure.actionMessage(for: error)
     }
     isLoadingRooms = false
   }
@@ -65,10 +76,10 @@ final class InstaChatStore: ObservableObject {
     isLoadingMessages = true
     errorMessage = nil
     do {
-      let page = try await client.getMessages(roomID: roomID, limit: configuration.historyLimit)
+      let page = try await client.getMessages(roomID: roomID, limit: configuration.historyLimit, cursor: nil)
       mergeFetchedMessages(page.messages, roomID: roomID)
     } catch {
-      errorMessage = error.localizedDescription
+      errorMessage = InstaChatSendFailure.actionMessage(for: error)
     }
     isLoadingMessages = false
   }
@@ -88,13 +99,7 @@ final class InstaChatStore: ObservableObject {
       type: .text,
       createdAt: Date()
     )
-    append(optimisticMessage, replacingLocalEcho: false, updateRoomPreview: true, incrementsUnread: false)
-
-    do {
-      try await client.sendText(trimmedText, roomID: roomID)
-    } catch {
-      errorMessage = error.localizedDescription
-    }
+    await enqueueAndSend(message: optimisticMessage, payload: .text(trimmedText))
   }
 
   func sendLocation(_ location: InstaChatLocation, roomID: String) async {
@@ -108,32 +113,46 @@ final class InstaChatStore: ObservableObject {
       createdAt: Date(),
       location: location
     )
-    append(optimisticMessage, replacingLocalEcho: false, updateRoomPreview: true, incrementsUnread: false)
-
-    do {
-      try await client.sendLocation(location, roomID: roomID)
-    } catch {
-      errorMessage = error.localizedDescription
-    }
+    await enqueueAndSend(message: optimisticMessage, payload: .location(location))
   }
 
   func sendAttachment(fileURL: URL, roomID: String, contentType: String? = nil) async {
+    let messageID = "local-\(UUID().uuidString)"
     do {
-      let attachment = try await client.uploadAttachment(fileURL: fileURL, roomID: roomID, contentType: contentType)
+      let localFileURL = try await pendingStore.preserveFile(at: fileURL, messageID: messageID)
+      let resolvedContentType = contentType ?? MimeTypeResolver.mimeType(for: localFileURL)
+      let attachmentType = MimeTypeResolver.attachmentType(for: resolvedContentType)
+      let localAttachment = InstaChatAttachment(
+        id: "local-attachment-\(UUID().uuidString)",
+        fileName: fileURL.lastPathComponent.isEmpty ? "Attachment" : fileURL.lastPathComponent,
+        contentType: resolvedContentType,
+        type: attachmentType,
+        fileSize: try? localFileURL.fileSize,
+        url: localFileURL
+      )
       let optimisticMessage = InstaChatMessage(
-        id: "local-\(UUID().uuidString)",
+        id: messageID,
         roomID: roomID,
         senderID: configuration.user.id,
         senderName: configuration.user.name,
-        content: attachment.fileName,
-        type: attachment.type == .image ? .image : .file,
+        content: localAttachment.fileName,
+        type: attachmentType == .image ? .image : .file,
         createdAt: Date(),
-        attachment: attachment
+        attachment: localAttachment
       )
-      append(optimisticMessage, replacingLocalEcho: false, updateRoomPreview: true, incrementsUnread: false)
-      try await client.sendAttachment(attachment, text: attachment.fileName, roomID: roomID)
+      await enqueueAndSend(
+        message: optimisticMessage,
+        payload: .attachment(
+          localFileURL: localFileURL,
+          contentType: resolvedContentType,
+          uploadedAttachment: nil
+        )
+      )
     } catch {
-      errorMessage = error.localizedDescription
+      errorMessage = InstaChatSendFailure.userFacing(
+        for: error,
+        attachmentType: MimeTypeResolver.attachmentType(for: contentType ?? MimeTypeResolver.mimeType(for: fileURL))
+      ).message
     }
   }
 
@@ -153,8 +172,31 @@ final class InstaChatStore: ObservableObject {
     errorMessage = message
   }
 
+  func reportError(_ error: Error) {
+    errorMessage = InstaChatSendFailure.actionMessage(for: error)
+  }
+
+  func dismissError() {
+    errorMessage = nil
+  }
+
   func messages(for roomID: String) -> [InstaChatMessage] {
     messagesByRoom[roomID] ?? []
+  }
+
+  func deliveryState(for messageID: String) -> OutgoingMessageDeliveryState? {
+    deliveryStatesByMessageID[messageID]
+  }
+
+  func retryMessage(messageID: String) async {
+    guard var pending = pendingOutgoingByMessageID[messageID] else {
+      return
+    }
+    pending.failure = nil
+    pendingOutgoingByMessageID[messageID] = pending
+    deliveryStatesByMessageID[messageID] = .sending
+    persistPendingMessages()
+    await performSend(messageID: messageID)
   }
 
   func room(id roomID: String) -> InstaChatRoom? {
@@ -182,6 +224,7 @@ final class InstaChatStore: ObservableObject {
       if let existingIndex = messages.firstIndex(where: { $0.id == fetchedMessage.id }) {
         messages[existingIndex] = fetchedMessage
       } else if let localEchoIndex = localEchoIndex(for: fetchedMessage, in: messages) {
+        resolvePendingMessage(messageID: messages[localEchoIndex].id)
         messages[localEchoIndex] = fetchedMessage
       } else {
         messages.append(fetchedMessage)
@@ -201,6 +244,7 @@ final class InstaChatStore: ObservableObject {
     if let existingIndex = messages.firstIndex(where: { $0.id == message.id }) {
       messages[existingIndex] = message
     } else if let localEchoIndex = localEchoIndex(for: message, in: messages) {
+      resolvePendingMessage(messageID: messages[localEchoIndex].id)
       messages[localEchoIndex] = message
     } else {
       messages.append(message)
@@ -246,6 +290,101 @@ final class InstaChatStore: ObservableObject {
       }
       return candidate.localEchoKey == message.localEchoKey
     }
+  }
+
+  private func enqueueAndSend(message: InstaChatMessage, payload: PendingOutgoingPayload) async {
+    let pending = PendingOutgoingMessage(message: message, payload: payload, failure: nil)
+    pendingOutgoingByMessageID[message.id] = pending
+    deliveryStatesByMessageID[message.id] = .sending
+    append(message, replacingLocalEcho: false, updateRoomPreview: true, incrementsUnread: false)
+    persistPendingMessages()
+    await performSend(messageID: message.id)
+  }
+
+  private func performSend(messageID: String) async {
+    guard var pending = pendingOutgoingByMessageID[messageID] else {
+      return
+    }
+
+    do {
+      switch pending.payload {
+      case let .text(text):
+        try await client.sendText(text, roomID: pending.message.roomID)
+      case let .location(location):
+        try await client.sendLocation(location, roomID: pending.message.roomID)
+      case let .attachment(localFileURL, contentType, existingAttachment):
+        let uploadedAttachment: InstaChatAttachment
+        if let existingAttachment {
+          uploadedAttachment = existingAttachment
+        } else {
+          uploadedAttachment = try await client.uploadAttachment(
+            fileURL: localFileURL,
+            roomID: pending.message.roomID,
+            contentType: contentType
+          )
+          pending.payload = .attachment(
+            localFileURL: localFileURL,
+            contentType: contentType,
+            uploadedAttachment: uploadedAttachment
+          )
+          pending.message.attachment = uploadedAttachment
+          pending.message.content = uploadedAttachment.fileName
+          pendingOutgoingByMessageID[messageID] = pending
+          updateMessage(pending.message)
+          persistPendingMessages()
+        }
+        try await client.sendAttachment(
+          uploadedAttachment,
+          text: uploadedAttachment.fileName,
+          roomID: pending.message.roomID
+        )
+      }
+
+      resolvePendingMessage(messageID: messageID)
+    } catch {
+      let failure = InstaChatSendFailure.userFacing(for: error, attachmentType: pending.payload.attachmentType)
+      pending.failure = failure
+      pendingOutgoingByMessageID[messageID] = pending
+      deliveryStatesByMessageID[messageID] = .failed(failure)
+      persistPendingMessages()
+    }
+  }
+
+  private func updateMessage(_ message: InstaChatMessage) {
+    guard var messages = messagesByRoom[message.roomID],
+          let index = messages.firstIndex(where: { $0.id == message.id }) else {
+      return
+    }
+    messages[index] = message
+    messagesByRoom[message.roomID] = messages
+  }
+
+  private func resolvePendingMessage(messageID: String) {
+    guard let pending = pendingOutgoingByMessageID.removeValue(forKey: messageID) else {
+      deliveryStatesByMessageID[messageID] = nil
+      return
+    }
+    deliveryStatesByMessageID[messageID] = nil
+    pendingStore.removePreservedFile(for: pending)
+    persistPendingMessages()
+  }
+
+  private func restorePendingMessages() {
+    for var pending in pendingStore.load() {
+      let attachmentType = pending.payload.attachmentType
+      let failure = pending.failure ?? .interrupted(attachmentType: attachmentType)
+      pending.failure = failure
+      pendingOutgoingByMessageID[pending.message.id] = pending
+      deliveryStatesByMessageID[pending.message.id] = .failed(failure)
+      append(pending.message, replacingLocalEcho: false, updateRoomPreview: true, incrementsUnread: false)
+    }
+    persistPendingMessages()
+  }
+
+  private func persistPendingMessages() {
+    pendingStore.save(
+      pendingOutgoingByMessageID.values.sorted { $0.message.createdAt < $1.message.createdAt }
+    )
   }
 
   private func mergeRoomList(_ fetchedRooms: [InstaChatRoom]) -> [InstaChatRoom] {

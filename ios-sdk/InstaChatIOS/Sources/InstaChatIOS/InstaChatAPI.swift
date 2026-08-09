@@ -23,13 +23,29 @@ public enum InstaChatError: LocalizedError, Sendable {
   }
 }
 
-public final class InstaChatClient: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
+protocol InstaChatClientProtocol: AnyObject, Sendable {
+  func getRooms() async throws -> [InstaChatRoom]
+  func getMessages(roomID: String, limit: Int?, cursor: String?) async throws -> InstaChatMessagesPage
+  func uploadAttachment(fileURL: URL, roomID: String, contentType: String?) async throws -> InstaChatAttachment
+  func sendText(_ text: String, roomID: String) async throws
+  func sendLocation(_ location: InstaChatLocation, roomID: String) async throws
+  func sendAttachment(_ attachment: InstaChatAttachment, text: String, roomID: String) async throws
+  func sendTyping(roomID: String, isTyping: Bool) async throws
+  func realtimeEvents() -> AsyncStream<InstaChatRealtimeEvent>
+  func disconnect()
+}
+
+public final class InstaChatClient: NSObject, InstaChatClientProtocol, URLSessionWebSocketDelegate, @unchecked Sendable {
   private let configuration: InstaChatConfiguration
   private let session: URLSession
+  private var webSocketSession: URLSession!
   private let decoder: JSONDecoder
   private let encoder = JSONEncoder()
   private var webSocketTask: URLSessionWebSocketTask?
   private var messageContinuation: AsyncStream<InstaChatRealtimeEvent>.Continuation?
+  private let webSocketStateLock = NSLock()
+  private var webSocketIsOpen = false
+  private var shouldMaintainRealtimeConnection = false
   private var currentBackendUserID: String?
   private let tokenIdentity: InstaChatTokenIdentity
 
@@ -40,6 +56,8 @@ public final class InstaChatClient: NSObject, URLSessionWebSocketDelegate, @unch
     self.decoder.dateDecodingStrategy = .iso8601WithFractionalSeconds
     self.tokenIdentity = InstaChatTokenIdentity(token: configuration.token)
     self.currentBackendUserID = tokenIdentity.subject
+    super.init()
+    self.webSocketSession = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
   }
 
   public func getRooms() async throws -> [InstaChatRoom] {
@@ -118,6 +136,7 @@ public final class InstaChatClient: NSObject, URLSessionWebSocketDelegate, @unch
   public func realtimeEvents() -> AsyncStream<InstaChatRealtimeEvent> {
     AsyncStream { continuation in
       messageContinuation = continuation
+      shouldMaintainRealtimeConnection = true
       connectWebSocketIfNeeded()
       receiveNextWebSocketMessage()
       continuation.onTermination = { [weak self] _ in
@@ -127,10 +146,16 @@ public final class InstaChatClient: NSObject, URLSessionWebSocketDelegate, @unch
   }
 
   public func disconnect() {
+    shouldMaintainRealtimeConnection = false
     webSocketTask?.cancel(with: .goingAway, reason: nil)
     webSocketTask = nil
-    messageContinuation?.finish()
+    setWebSocketOpen(false)
+    let continuation = messageContinuation
     messageContinuation = nil
+    continuation?.finish()
+    let socketSession = webSocketSession
+    webSocketSession = nil
+    socketSession?.invalidateAndCancel()
   }
 
   private func sendMessage(content: String, type: InstaChatMessageType, roomID: String, attachmentIDs: [String]) async throws {
@@ -142,19 +167,34 @@ public final class InstaChatClient: NSObject, URLSessionWebSocketDelegate, @unch
   }
 
   private func sendWebSocket(_ envelope: RealtimeOutgoingEnvelope) async throws {
-    connectWebSocketIfNeeded()
-    guard let webSocketTask else {
-      throw InstaChatError.websocketClosed
-    }
     let data = try encoder.encode(envelope)
     guard let text = String(data: data, encoding: .utf8) else {
       throw InstaChatError.invalidResponse
     }
-    try await webSocketTask.send(.string(text))
+
+    var latestError: Error = InstaChatError.websocketClosed
+    for attempt in 0..<2 {
+      connectWebSocketIfNeeded()
+      do {
+        try await waitForWebSocketConnection()
+        guard let webSocketTask else {
+          throw InstaChatError.websocketClosed
+        }
+        try await webSocketTask.send(.string(text))
+        return
+      } catch {
+        latestError = error
+        resetWebSocket()
+        if attempt == 0 {
+          try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+      }
+    }
+    throw latestError
   }
 
   private func connectWebSocketIfNeeded() {
-    guard webSocketTask == nil else {
+    guard webSocketTask == nil || webSocketTask?.state == .completed || webSocketTask?.state == .canceling else {
       return
     }
 
@@ -167,14 +207,79 @@ public final class InstaChatClient: NSObject, URLSessionWebSocketDelegate, @unch
       return
     }
 
-    let task = session.webSocketTask(with: url)
+    guard let webSocketSession else {
+      return
+    }
+    let task = webSocketSession.webSocketTask(with: url)
     webSocketTask = task
+    setWebSocketOpen(false)
     task.resume()
   }
 
+  private func waitForWebSocketConnection() async throws {
+    for _ in 0..<100 {
+      try Task.checkCancellation()
+      if isWebSocketOpen {
+        return
+      }
+      if let state = webSocketTask?.state, state == .completed || state == .canceling {
+        throw InstaChatError.websocketClosed
+      }
+      try await Task.sleep(nanoseconds: 100_000_000)
+    }
+    throw URLError(.timedOut)
+  }
+
+  private var isWebSocketOpen: Bool {
+    webSocketStateLock.lock()
+    defer { webSocketStateLock.unlock() }
+    return webSocketIsOpen
+  }
+
+  private func setWebSocketOpen(_ isOpen: Bool) {
+    webSocketStateLock.lock()
+    webSocketIsOpen = isOpen
+    webSocketStateLock.unlock()
+  }
+
+  private func resetWebSocket() {
+    webSocketTask?.cancel(with: .goingAway, reason: nil)
+    webSocketTask = nil
+    setWebSocketOpen(false)
+  }
+
+  public func urlSession(
+    _ session: URLSession,
+    webSocketTask: URLSessionWebSocketTask,
+    didOpenWithProtocol protocol: String?
+  ) {
+    guard self.webSocketTask === webSocketTask else {
+      return
+    }
+    setWebSocketOpen(true)
+  }
+
+  public func urlSession(
+    _ session: URLSession,
+    webSocketTask: URLSessionWebSocketTask,
+    didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
+    reason: Data?
+  ) {
+    guard self.webSocketTask === webSocketTask else {
+      return
+    }
+    recoverRealtimeConnection()
+  }
+
   private func receiveNextWebSocketMessage() {
-    webSocketTask?.receive { [weak self] result in
+    guard let receivingTask = webSocketTask else {
+      return
+    }
+    receivingTask.receive { [weak self] result in
       guard let self else {
+        return
+      }
+      guard self.webSocketTask === receivingTask else {
         return
       }
 
@@ -183,8 +288,23 @@ public final class InstaChatClient: NSObject, URLSessionWebSocketDelegate, @unch
         self.handleWebSocketMessage(message)
         self.receiveNextWebSocketMessage()
       case .failure:
-        self.disconnect()
+        self.recoverRealtimeConnection()
       }
+    }
+  }
+
+  private func recoverRealtimeConnection() {
+    resetWebSocket()
+    guard shouldMaintainRealtimeConnection, messageContinuation != nil else {
+      return
+    }
+    Task { [weak self] in
+      try? await Task.sleep(nanoseconds: 500_000_000)
+      guard let self, self.shouldMaintainRealtimeConnection else {
+        return
+      }
+      self.connectWebSocketIfNeeded()
+      self.receiveNextWebSocketMessage()
     }
   }
 

@@ -63,8 +63,17 @@ struct ChatRoomListView: View {
       ChatDetailView(room: room, onClose: onClose, onProviderProfileTap: onProviderProfileTap)
         .environmentObject(store)
     }
-    .alert("Chat Error", isPresented: Binding(get: { store.errorMessage != nil }, set: { _ in })) {
-      Button("OK", role: .cancel) {}
+    .alert("Unable to Load Chats", isPresented: Binding(
+      get: { store.errorMessage != nil },
+      set: { isPresented in
+        if !isPresented {
+          store.dismissError()
+        }
+      }
+    )) {
+      Button("OK", role: .cancel) {
+        store.dismissError()
+      }
     } message: {
       Text(store.errorMessage ?? "")
     }

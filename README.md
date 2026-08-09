@@ -111,6 +111,8 @@ Newly sent native iOS voice notes play from the preserved local recording while 
 
 Native iOS image and video previews retain the exact tapped message/attachment identity even when the chat list recycles rows. Media loading is keyed by URL, mixed image/video/voice histories remain chronologically ordered, and the full voice-note row is available as the playback target.
 
+Native iOS remote videos stream with authenticated `AVURLAsset` requests rather than waiting for a full-file download. Transient CDN readiness failures use a bounded 15.5-second retry window and the preview provides a visible Retry action. Outgoing videos use their preserved local upload copy immediately after backend reconciliation.
+
 ## With Host Adapters
 
 ```tsx

@@ -1267,7 +1267,11 @@ private struct MediaPreviewScreen: View {
           AuthenticatedRemoteImage(url: attachment.url, authToken: mediaAuthToken, contentMode: .fit)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if attachment.type == .video {
-          VideoPreviewPlayer(url: attachment.url, authToken: mediaAuthToken)
+          VideoPreviewPlayer(
+            url: attachment.url,
+            fileName: attachment.fileName,
+            authToken: mediaAuthToken
+          )
             .ignoresSafeArea(edges: .bottom)
         } else {
           unavailablePreview(title: attachment.fileName, systemImage: "doc")
@@ -1396,58 +1400,165 @@ private final class SendablePlatformImage: @unchecked Sendable {
 
 private struct VideoPreviewPlayer: View {
   let url: URL
+  let fileName: String
   let authToken: String
-  @State private var player: AVPlayer?
-  @State private var isLoading = true
-  @State private var playbackError: String?
+  @StateObject private var playbackController = VideoPreviewPlaybackController()
 
   var body: some View {
     ZStack {
-      VideoPlayer(player: player)
+      VideoPlayer(player: playbackController.player)
 
-      if isLoading {
-        ProgressView()
-          .tint(.white)
+      if playbackController.isLoading {
+        VStack(spacing: 12) {
+          ProgressView()
+            .tint(.white)
+          Text("Preparing video...")
+            .font(.footnote)
+            .foregroundStyle(.white.opacity(0.82))
+        }
       }
 
-      if let playbackError {
-        VStack(spacing: 10) {
+      if let playbackError = playbackController.playbackError {
+        VStack(spacing: 14) {
           Image(systemName: "exclamationmark.triangle")
             .font(.system(size: 28, weight: .semibold))
           Text(playbackError)
             .font(.footnote)
             .multilineTextAlignment(.center)
+          Button {
+            playbackController.load(
+              url: url,
+              fileName: fileName,
+              authToken: authToken,
+              force: true
+            )
+          } label: {
+            Label("Retry", systemImage: "arrow.clockwise")
+              .font(.subheadline.weight(.semibold))
+              .padding(.horizontal, 18)
+              .padding(.vertical, 10)
+          }
+          .buttonStyle(.borderedProminent)
+          .accessibilityHint("Attempts to load and play this video again")
         }
         .foregroundStyle(.white)
         .padding(20)
       }
     }
-      .task(id: url) {
-        player?.pause()
-        player = nil
-        isLoading = true
-        playbackError = nil
-        do {
-          let localURL = try await AuthenticatedMediaCache.shared.localFileURL(for: url, authToken: authToken)
-          guard !Task.isCancelled else {
-            return
-          }
-          let player = AVPlayer(url: localURL)
-          self.player = player
-          isLoading = false
-          player.play()
-        } catch {
-          guard !Task.isCancelled else {
-            return
-          }
-          isLoading = false
-          playbackError = error.localizedDescription
-        }
+      .task(id: VideoPlaybackRequest(url: url, fileName: fileName)) {
+        playbackController.load(url: url, fileName: fileName, authToken: authToken)
       }
       .onDisappear {
-        player?.pause()
-        player = nil
+        playbackController.stop()
       }
+  }
+}
+
+private struct VideoPlaybackRequest: Hashable {
+  var url: URL
+  var fileName: String
+}
+
+@MainActor
+private final class VideoPreviewPlaybackController: ObservableObject {
+  @Published private(set) var player: AVPlayer?
+  @Published private(set) var isLoading = true
+  @Published private(set) var playbackError: String?
+
+  private var activeRequest: VideoPlaybackRequest?
+  private var loadTask: Task<Void, Never>?
+  private var statusObservation: NSKeyValueObservation?
+
+  deinit {
+    loadTask?.cancel()
+    statusObservation?.invalidate()
+  }
+
+  func load(url: URL, fileName: String, authToken: String, force: Bool = false) {
+    let request = VideoPlaybackRequest(url: url, fileName: fileName)
+    guard force || request != activeRequest else {
+      return
+    }
+
+    stop(resetRequest: false)
+    activeRequest = request
+    isLoading = true
+    playbackError = nil
+
+    loadTask = Task { [weak self] in
+      do {
+        let source = try await VideoPlaybackSourceResolver.resolve(
+          remoteURL: url,
+          fileName: fileName,
+          authToken: authToken
+        )
+        try Task.checkCancellation()
+        self?.installPlayer(source: source, request: request)
+      } catch is CancellationError {
+        return
+      } catch {
+        guard !Task.isCancelled else {
+          return
+        }
+        self?.isLoading = false
+        self?.playbackError = "Video is not available yet. Please try again."
+      }
+    }
+  }
+
+  func stop() {
+    stop(resetRequest: true)
+  }
+
+  private func stop(resetRequest: Bool) {
+    loadTask?.cancel()
+    loadTask = nil
+    statusObservation?.invalidate()
+    statusObservation = nil
+    player?.pause()
+    player = nil
+    if resetRequest {
+      activeRequest = nil
+    }
+  }
+
+  private func installPlayer(source: VideoPlaybackSource, request: VideoPlaybackRequest) {
+    guard activeRequest == request else {
+      return
+    }
+
+    let options: [String: Any]? = source.httpHeaders.isEmpty
+      ? nil
+      : ["AVURLAssetHTTPHeaderFieldsKey": source.httpHeaders]
+    let asset = AVURLAsset(url: source.url, options: options)
+    let item = AVPlayerItem(asset: asset)
+    item.preferredForwardBufferDuration = 2
+    let player = AVPlayer(playerItem: item)
+    player.automaticallyWaitsToMinimizeStalling = true
+    self.player = player
+
+    statusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self, weak item] _, _ in
+      Task { @MainActor in
+        guard let self, let item, self.player?.currentItem === item else {
+          return
+        }
+        switch item.status {
+        case .readyToPlay:
+          self.isLoading = false
+          self.playbackError = nil
+        case .failed:
+          self.player?.pause()
+          self.isLoading = false
+          self.playbackError = "Video playback failed. Please try again."
+        case .unknown:
+          break
+        @unknown default:
+          break
+        }
+      }
+    }
+
+    player.play()
   }
 }
 
@@ -1455,7 +1566,6 @@ actor AuthenticatedMediaCache {
   static let shared = AuthenticatedMediaCache()
 
   private var inFlight: [URL: Task<URL, Error>] = [:]
-  private static let maximumDownloadAttempts = 4
 
   func cachedFileExists(for remoteURL: URL, fileName: String? = nil) async -> Bool {
     if remoteURL.isFileURL {
@@ -1468,6 +1578,18 @@ actor AuthenticatedMediaCache {
     } catch {
       return false
     }
+  }
+
+  func existingLocalFileURL(for remoteURL: URL, fileName: String? = nil) async -> URL? {
+    if remoteURL.isFileURL {
+      return remoteURL
+    }
+
+    guard let destinationURL = try? cacheURL(for: remoteURL, fileName: fileName),
+          FileManager.default.fileExists(atPath: destinationURL.path) else {
+      return nil
+    }
+    return destinationURL
   }
 
   func storeLocalFile(at sourceURL: URL, for remoteURL: URL, fileName: String? = nil) async throws {
@@ -1492,7 +1614,8 @@ actor AuthenticatedMediaCache {
     for remoteURL: URL,
     authToken: String,
     fileName: String? = nil,
-    session: URLSession = .shared
+    session: URLSession = .shared,
+    retryDelaysNanoseconds: [UInt64] = MediaRetryPolicy.defaultRetryDelaysNanoseconds
   ) async throws -> URL {
     if remoteURL.isFileURL {
       return remoteURL
@@ -1511,7 +1634,8 @@ actor AuthenticatedMediaCache {
       let temporaryURL = try await Self.downloadWithRetry(
         remoteURL: remoteURL,
         authToken: authToken,
-        session: session
+        session: session,
+        retryDelaysNanoseconds: retryDelaysNanoseconds
       )
 
       let parentDirectory = destinationURL.deletingLastPathComponent()
@@ -1537,11 +1661,12 @@ actor AuthenticatedMediaCache {
   private static func downloadWithRetry(
     remoteURL: URL,
     authToken: String,
-    session: URLSession
+    session: URLSession,
+    retryDelaysNanoseconds: [UInt64]
   ) async throws -> URL {
     var latestError: Error = MediaDownloadError.unavailable
 
-    for attempt in 0..<maximumDownloadAttempts {
+    for attempt in 0...retryDelaysNanoseconds.count {
       do {
         var request = URLRequest(url: remoteURL)
         request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
@@ -1554,29 +1679,14 @@ actor AuthenticatedMediaCache {
         return temporaryURL
       } catch {
         latestError = error
-        guard attempt < maximumDownloadAttempts - 1, isTransient(error) else {
+        guard retryDelaysNanoseconds.indices.contains(attempt), MediaRetryPolicy.isTransient(error) else {
           throw error
         }
-        let delayNanoseconds = UInt64(250_000_000 * (1 << attempt))
-        try await Task.sleep(nanoseconds: delayNanoseconds)
+        try await Task.sleep(nanoseconds: retryDelaysNanoseconds[attempt])
       }
     }
 
     throw latestError
-  }
-
-  private static func isTransient(_ error: Error) -> Bool {
-    if let mediaError = error as? MediaDownloadError,
-       case let .httpStatus(statusCode) = mediaError {
-      return statusCode == 400 || statusCode == 404 || statusCode == 408 ||
-        statusCode == 425 || statusCode == 429 || (500...599).contains(statusCode)
-    }
-
-    guard let urlError = error as? URLError else {
-      return false
-    }
-    return [.timedOut, .networkConnectionLost, .cannotConnectToHost, .notConnectedToInternet]
-      .contains(urlError.code)
   }
 
   private func cacheURL(for remoteURL: URL, fileName: String?) throws -> URL {

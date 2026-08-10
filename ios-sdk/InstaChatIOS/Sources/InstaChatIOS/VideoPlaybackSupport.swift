@@ -33,6 +33,47 @@ enum MediaRetryPolicy {
   }
 }
 
+enum AuthenticatedMediaDataLoader {
+  static func load(
+    remoteURL: URL,
+    authToken: String,
+    session: URLSession = .shared,
+    retryDelaysNanoseconds: [UInt64] = MediaRetryPolicy.defaultRetryDelaysNanoseconds
+  ) async throws -> Data {
+    if remoteURL.isFileURL {
+      return try await Task.detached(priority: .utility) {
+        try Data(contentsOf: remoteURL)
+      }.value
+    }
+
+    var latestError: Error = MediaDownloadError.unavailable
+    for attempt in 0...retryDelaysNanoseconds.count {
+      do {
+        var request = URLRequest(url: remoteURL)
+        if !authToken.isEmpty {
+          request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+          throw MediaDownloadError.unavailable
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+          throw MediaDownloadError.httpStatus(httpResponse.statusCode)
+        }
+        return data
+      } catch {
+        latestError = error
+        guard retryDelaysNanoseconds.indices.contains(attempt), MediaRetryPolicy.isTransient(error) else {
+          throw error
+        }
+        try await Task.sleep(nanoseconds: retryDelaysNanoseconds[attempt])
+      }
+    }
+
+    throw latestError
+  }
+}
+
 enum VideoPlaybackSourceResolver {
   static func resolve(
     remoteURL: URL,

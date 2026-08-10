@@ -2,7 +2,7 @@
 
 Small native SwiftUI iOS app for validating the `InstaChatIOS` SDK integration.
 
-The sample project depends on the public Swift Package at `https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git` starting from `v0.1.24`.
+The sample project depends on the public Swift Package at `https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git` starting from `v0.1.25`.
 
 ## Open
 
@@ -33,6 +33,7 @@ INSTACHAT_AUTO_OPEN_CHAT=1
 - Exact image/video preview selection, including mixed-media conversations and recycled list rows.
 - Streamed remote video playback with authenticated requests, delayed-CDN retry, and an explicit preview Retry button.
 - Immediate local playback for newly sent videos while their CDN copy becomes available.
+- Authenticated image loading with transient CDN retry and an inline Retry action that does not require reopening chat.
 - Persistent inline failure states and retry for text, video, voice-note, and other outgoing messages.
 - Direct dependency on the local Swift Package product `InstaChatIOS`.
 

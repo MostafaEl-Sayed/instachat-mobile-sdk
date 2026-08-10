@@ -914,15 +914,8 @@ private struct AttachmentBubble: View {
   var body: some View {
     Group {
       if attachment.type == .image {
-        Button {
-          onPreview(attachment)
-        } label: {
-          imageBubble
-            .bubbleStyle(isCurrentUser: isCurrentUser)
-        }
-        .buttonStyle(.plain)
-        .contentShape(Rectangle())
-        .accessibilityLabel("Open image \(attachment.fileName)")
+        imageBubble
+          .bubbleStyle(isCurrentUser: isCurrentUser)
       } else if attachment.type == .video {
         Button {
           onPreview(attachment)
@@ -949,7 +942,13 @@ private struct AttachmentBubble: View {
   }
 
   private var imageBubble: some View {
-    AuthenticatedRemoteImage(url: attachment.url, authToken: mediaAuthToken, contentMode: .fill)
+    AuthenticatedRemoteImage(
+      url: attachment.url,
+      authToken: mediaAuthToken,
+      contentMode: .fill,
+      onOpen: { onPreview(attachment) },
+      openAccessibilityLabel: "Open image \(attachment.fileName)"
+    )
     .frame(width: 220, height: 150)
     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
   }
@@ -1309,22 +1308,50 @@ private struct AuthenticatedRemoteImage: View {
   var url: URL
   var authToken: String
   var contentMode: ContentMode
+  var onOpen: (() -> Void)?
+  var openAccessibilityLabel: String?
 
   @State private var image: PlatformImage?
   @State private var didFail = false
+  @State private var retryGeneration = 0
+
+  init(
+    url: URL,
+    authToken: String,
+    contentMode: ContentMode,
+    onOpen: (() -> Void)? = nil,
+    openAccessibilityLabel: String? = nil
+  ) {
+    self.url = url
+    self.authToken = authToken
+    self.contentMode = contentMode
+    self.onOpen = onOpen
+    self.openAccessibilityLabel = openAccessibilityLabel
+  }
 
   var body: some View {
     Group {
       if let image {
-        platformImage(image)
-          .resizable()
-          .aspectRatio(contentMode: contentMode)
+        loadedImage(image)
       } else if didFail {
         Rectangle()
           .fill(Color.gray.opacity(0.18))
           .overlay {
-            Image(systemName: "photo")
-              .foregroundStyle(.secondary)
+            VStack(spacing: 8) {
+              Image(systemName: "photo.badge.exclamationmark")
+                .font(.system(size: 24, weight: .medium))
+                .foregroundStyle(.secondary)
+              Button {
+                retryGeneration &+= 1
+              } label: {
+                Label("Retry", systemImage: "arrow.clockwise")
+                  .font(.subheadline.weight(.semibold))
+                  .frame(minHeight: 44)
+                  .padding(.horizontal, 10)
+              }
+              .buttonStyle(.borderedProminent)
+              .accessibilityHint("Attempts to load this image again")
+            }
           }
       } else {
         Rectangle()
@@ -1335,7 +1362,7 @@ private struct AuthenticatedRemoteImage: View {
       }
     }
     .clipped()
-    .task(id: url) {
+    .task(id: ImageLoadRequest(url: url, retryGeneration: retryGeneration)) {
       image = nil
       didFail = false
       await loadImage(requestedURL: url)
@@ -1356,22 +1383,48 @@ private struct AuthenticatedRemoteImage: View {
       return
     }
 
-    var request = URLRequest(url: requestedURL)
-    request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
-
     do {
-      let (data, _) = try await URLSession.shared.data(for: request)
-      guard let loadedImage = PlatformImage(data: data) else {
-        didFail = true
+      let data = try await AuthenticatedMediaDataLoader.load(
+        remoteURL: requestedURL,
+        authToken: authToken
+      )
+      let loadedImage = await Task.detached(priority: .utility) {
+        SendablePlatformImage(PlatformImage(data: data))
+      }.value
+      guard !Task.isCancelled else {
         return
       }
-      guard !Task.isCancelled else {
+      guard let loadedImage = loadedImage.value else {
+        didFail = true
         return
       }
       image = loadedImage
       didFail = false
+    } catch is CancellationError {
+      return
     } catch {
+      guard !Task.isCancelled else {
+        return
+      }
       didFail = true
+    }
+  }
+
+  @ViewBuilder
+  private func loadedImage(_ image: PlatformImage) -> some View {
+    if let onOpen {
+      Button(action: onOpen) {
+        platformImage(image)
+          .resizable()
+          .aspectRatio(contentMode: contentMode)
+      }
+      .buttonStyle(.plain)
+      .contentShape(Rectangle())
+      .accessibilityLabel(openAccessibilityLabel ?? "Open image")
+    } else {
+      platformImage(image)
+        .resizable()
+        .aspectRatio(contentMode: contentMode)
     }
   }
 
@@ -1382,6 +1435,11 @@ private struct AuthenticatedRemoteImage: View {
       Image(nsImage: image)
     #endif
   }
+}
+
+private struct ImageLoadRequest: Hashable {
+  var url: URL
+  var retryGeneration: Int
 }
 
 #if os(iOS)

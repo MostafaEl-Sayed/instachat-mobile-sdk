@@ -713,6 +713,69 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(MediaRetryPolicy.defaultRetryDelaysNanoseconds.count + 1, 6)
   }
 
+  func testAuthenticatedImageLoaderValidatesStatusAndRetriesAllTransientResponses() async throws {
+    let remoteURL = URL(string: "https://cdn.example.com/image-\(UUID().uuidString).jpg")!
+    let imageData = Data("image-response".utf8)
+    StubMediaURLProtocol.reset(
+      statusCodes: [400, 404, 408, 425, 429, 500, 200],
+      responseData: imageData
+    )
+    let mediaSession = Self.mediaTestSession()
+    defer { mediaSession.invalidateAndCancel() }
+
+    let result = try await AuthenticatedMediaDataLoader.load(
+      remoteURL: remoteURL,
+      authToken: "image-token",
+      session: mediaSession,
+      retryDelaysNanoseconds: [0, 0, 0, 0, 0, 0]
+    )
+
+    XCTAssertEqual(result, imageData)
+    XCTAssertEqual(StubMediaURLProtocol.requestCount, 7)
+    XCTAssertEqual(StubMediaURLProtocol.requestMethods, Array(repeating: "GET", count: 7))
+    XCTAssertEqual(
+      StubMediaURLProtocol.authorizationHeaders,
+      Array(repeating: "Bearer image-token", count: 7)
+    )
+  }
+
+  func testAuthenticatedImageLoaderDoesNotRetryPermanentHTTPFailure() async throws {
+    let remoteURL = URL(string: "https://cdn.example.com/private-image-\(UUID().uuidString).jpg")!
+    StubMediaURLProtocol.reset(statusCodes: [401, 200], responseData: Data("should-not-load".utf8))
+    let mediaSession = Self.mediaTestSession()
+    defer { mediaSession.invalidateAndCancel() }
+
+    do {
+      _ = try await AuthenticatedMediaDataLoader.load(
+        remoteURL: remoteURL,
+        authToken: "invalid-token",
+        session: mediaSession,
+        retryDelaysNanoseconds: [0]
+      )
+      XCTFail("Expected HTTP 401 to fail without retry")
+    } catch let MediaDownloadError.httpStatus(statusCode) {
+      XCTAssertEqual(statusCode, 401)
+    } catch {
+      XCTFail("Unexpected error: \(error)")
+    }
+
+    XCTAssertEqual(StubMediaURLProtocol.requestCount, 1)
+  }
+
+  func testMediaRetryPolicyIncludesConnectionFailures() {
+    let transientConnectionErrors: [URLError.Code] = [
+      .timedOut,
+      .networkConnectionLost,
+      .cannotConnectToHost,
+      .notConnectedToInternet
+    ]
+
+    for code in transientConnectionErrors {
+      XCTAssertTrue(MediaRetryPolicy.isTransient(URLError(code)))
+    }
+    XCTAssertFalse(MediaRetryPolicy.isTransient(URLError(.userAuthenticationRequired)))
+  }
+
   func testTransientMediaDownloadRetriesWithExponentialBackoff() async throws {
     let remoteURL = URL(string: "https://cdn.example.com/voice-\(UUID().uuidString).m4a")!
     StubMediaURLProtocol.reset(statusCodes: [400, 404, 200], responseData: Data("cdn-audio".utf8))

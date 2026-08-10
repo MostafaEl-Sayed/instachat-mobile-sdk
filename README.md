@@ -113,6 +113,8 @@ Native iOS image and video previews retain the exact tapped message/attachment i
 
 Native iOS remote videos stream with authenticated `AVURLAsset` requests rather than waiting for a full-file download. Transient CDN readiness failures use a bounded 15.5-second retry window and the preview provides a visible Retry action. Outgoing videos use their preserved local upload copy immediately after backend reconciliation.
 
+Native iOS image loading validates CDN status codes and retries transient `400`, `404`, `408`, `425`, `429`, `5xx`, and connection failures with the same bounded media policy. A failed thumbnail or full-screen image exposes an inline Retry action, so users do not need to leave and reopen the chat.
+
 ## With Host Adapters
 
 ```tsx

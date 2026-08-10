@@ -113,6 +113,8 @@ Image and video previews are selected by the exact message and attachment identi
 
 Remote videos stream through `AVURLAsset`/`AVPlayerItem` with the SDK authentication header instead of downloading the complete file before playback. The SDK retries transient CDN readiness responses for up to approximately 15.5 seconds, then keeps the preview open with a clear Retry button. Newly sent videos are copied to the authenticated media cache during upload reconciliation and play from that local copy immediately.
 
+Authenticated image requests validate HTTP responses before decoding and use the same bounded retry policy for `400`, `404`, `408`, `425`, `429`, server errors, and transient connection failures. When automatic recovery is exhausted, the image bubble and full-screen preview show a visible Retry action that starts a fresh request without reopening the chat.
+
 ## Text Links
 
 Text messages automatically detect embedded `http://` and `https://` URLs, including multiline and Arabic/right-to-left messages. Links render with underline styling inside the existing sender/receiver bubble design and open through the standard platform URL opener, so Grandizar universal links such as `/provider-details/{providerId}` can route into the app when iOS supports them, while external links open in Safari, the App Store, or the appropriate app.

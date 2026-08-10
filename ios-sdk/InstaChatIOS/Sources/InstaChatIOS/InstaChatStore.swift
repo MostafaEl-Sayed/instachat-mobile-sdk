@@ -322,7 +322,7 @@ final class InstaChatStore: ObservableObject {
             roomID: pending.message.roomID,
             contentType: contentType
           )
-          if uploadedAttachment.type == .audio || uploadedAttachment.type == .video {
+          if uploadedAttachment.type == .audio || uploadedAttachment.type == .video || uploadedAttachment.type == .image {
             try? await AuthenticatedMediaCache.shared.storeLocalFile(
               at: localFileURL,
               for: uploadedAttachment.url,

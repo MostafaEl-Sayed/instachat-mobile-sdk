@@ -115,6 +115,8 @@ Remote videos stream through `AVURLAsset`/`AVPlayerItem` with the SDK authentica
 
 Authenticated image requests validate HTTP responses before decoding and use the same bounded retry policy for `400`, `404`, `408`, `425`, `429`, server errors, and transient connection failures. When automatic recovery is exhausted, the image bubble and full-screen preview show a visible Retry action that starts a fresh request without reopening the chat.
 
+Successfully decoded images are retained in a bounded in-memory cache, so SwiftUI row recycling during chat scrolling does not show another loader. Original media is also stored in the authenticated disk cache for chat reopen and process lifecycle reuse, with concurrent requests deduplicated. Invalid cached files are evicted before Retry. Newly uploaded images seed the disk cache before backend reconciliation removes the pending local file.
+
 ## Text Links
 
 Text messages automatically detect embedded `http://` and `https://` URLs, including multiline and Arabic/right-to-left messages. Links render with underline styling inside the existing sender/receiver bubble design and open through the standard platform URL opener, so Grandizar universal links such as `/provider-details/{providerId}` can route into the app when iOS supports them, while external links open in Safari, the App Store, or the appropriate app.

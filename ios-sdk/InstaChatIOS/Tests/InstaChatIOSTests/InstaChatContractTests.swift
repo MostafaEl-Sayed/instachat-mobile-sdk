@@ -725,12 +725,21 @@ final class InstaChatContractTests: XCTestCase {
 
     let result = try await AuthenticatedMediaDataLoader.load(
       remoteURL: remoteURL,
+      fileName: "cached-image.jpg",
       authToken: "image-token",
       session: mediaSession,
       retryDelaysNanoseconds: [0, 0, 0, 0, 0, 0]
     )
+    let cachedResult = try await AuthenticatedMediaDataLoader.load(
+      remoteURL: remoteURL,
+      fileName: "cached-image.jpg",
+      authToken: "image-token",
+      session: mediaSession,
+      retryDelaysNanoseconds: []
+    )
 
     XCTAssertEqual(result, imageData)
+    XCTAssertEqual(cachedResult, imageData)
     XCTAssertEqual(StubMediaURLProtocol.requestCount, 7)
     XCTAssertEqual(StubMediaURLProtocol.requestMethods, Array(repeating: "GET", count: 7))
     XCTAssertEqual(
@@ -760,6 +769,55 @@ final class InstaChatContractTests: XCTestCase {
     }
 
     XCTAssertEqual(StubMediaURLProtocol.requestCount, 1)
+  }
+
+  @MainActor
+  func testImageUploadBackendEchoUsesPreservedLocalCache() async throws {
+    let remoteURL = URL(string: "https://instachat.instakit.pro/uploads/image-\(UUID().uuidString).jpg")!
+    let uploadedAttachment = InstaChatAttachment(
+      id: "uploaded-image",
+      fileName: "outgoing-image.jpg",
+      contentType: "image/jpeg",
+      type: .image,
+      url: remoteURL
+    )
+    let client = StubInstaChatClient()
+    client.uploadResults = [.success(uploadedAttachment)]
+    client.attachmentSendResults = [.success(())]
+    let store = InstaChatStore(
+      configuration: Self.testConfiguration(),
+      client: client,
+      pendingStore: Self.temporaryPendingStore()
+    )
+    let imageData = Data("locally-selected-image".utf8)
+    let imageURL = try Self.temporaryMediaFile(name: "outgoing-image.jpg", data: imageData)
+
+    await store.sendAttachment(fileURL: imageURL, roomID: "room-image", contentType: "image/jpeg")
+    let localMessage = try XCTUnwrap(store.messages(for: "room-image").first)
+    store.applyRealtimeEvent(.message(Self.message(
+      id: "backend-image",
+      roomID: "room-image",
+      senderID: "user-1",
+      content: uploadedAttachment.fileName,
+      type: .image,
+      createdAt: localMessage.createdAt.addingTimeInterval(0.1),
+      attachment: uploadedAttachment
+    )))
+
+    StubMediaURLProtocol.reset(statusCodes: [500])
+    let mediaSession = Self.mediaTestSession()
+    defer { mediaSession.invalidateAndCancel() }
+    let cachedData = try await AuthenticatedMediaDataLoader.load(
+      remoteURL: remoteURL,
+      fileName: uploadedAttachment.fileName,
+      authToken: "token",
+      session: mediaSession,
+      retryDelaysNanoseconds: []
+    )
+
+    XCTAssertEqual(store.messages(for: "room-image").map(\.id), ["backend-image"])
+    XCTAssertEqual(cachedData, imageData)
+    XCTAssertEqual(StubMediaURLProtocol.requestCount, 0, "Outgoing image reconciliation must not redownload media")
   }
 
   func testMediaRetryPolicyIncludesConnectionFailures() {

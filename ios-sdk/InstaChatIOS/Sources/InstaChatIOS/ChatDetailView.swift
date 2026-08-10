@@ -944,6 +944,7 @@ private struct AttachmentBubble: View {
   private var imageBubble: some View {
     AuthenticatedRemoteImage(
       url: attachment.url,
+      fileName: attachment.fileName,
       authToken: mediaAuthToken,
       contentMode: .fill,
       onOpen: { onPreview(attachment) },
@@ -1263,7 +1264,12 @@ private struct MediaPreviewScreen: View {
       ZStack {
         Color.black.ignoresSafeArea()
         if attachment.type == .image {
-          AuthenticatedRemoteImage(url: attachment.url, authToken: mediaAuthToken, contentMode: .fit)
+          AuthenticatedRemoteImage(
+            url: attachment.url,
+            fileName: attachment.fileName,
+            authToken: mediaAuthToken,
+            contentMode: .fit
+          )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if attachment.type == .video {
           VideoPreviewPlayer(
@@ -1306,6 +1312,7 @@ private struct MediaPreviewScreen: View {
 
 private struct AuthenticatedRemoteImage: View {
   var url: URL
+  var fileName: String?
   var authToken: String
   var contentMode: ContentMode
   var onOpen: (() -> Void)?
@@ -1317,16 +1324,19 @@ private struct AuthenticatedRemoteImage: View {
 
   init(
     url: URL,
+    fileName: String? = nil,
     authToken: String,
     contentMode: ContentMode,
     onOpen: (() -> Void)? = nil,
     openAccessibilityLabel: String? = nil
   ) {
     self.url = url
+    self.fileName = fileName
     self.authToken = authToken
     self.contentMode = contentMode
     self.onOpen = onOpen
     self.openAccessibilityLabel = openAccessibilityLabel
+    _image = State(initialValue: PlatformImageMemoryCache.shared.image(for: url, authToken: authToken))
   }
 
   var body: some View {
@@ -1342,6 +1352,7 @@ private struct AuthenticatedRemoteImage: View {
                 .font(.system(size: 24, weight: .medium))
                 .foregroundStyle(.secondary)
               Button {
+                PlatformImageMemoryCache.shared.removeImage(for: url, authToken: authToken)
                 retryGeneration &+= 1
               } label: {
                 Label("Retry", systemImage: "arrow.clockwise")
@@ -1363,6 +1374,11 @@ private struct AuthenticatedRemoteImage: View {
     }
     .clipped()
     .task(id: ImageLoadRequest(url: url, retryGeneration: retryGeneration)) {
+      if let cachedImage = PlatformImageMemoryCache.shared.image(for: url, authToken: authToken) {
+        image = cachedImage
+        didFail = false
+        return
+      }
       image = nil
       didFail = false
       await loadImage(requestedURL: url)
@@ -1380,12 +1396,16 @@ private struct AuthenticatedRemoteImage: View {
       }
       image = loadedImage.value
       didFail = loadedImage.value == nil
+      if let loadedImage = loadedImage.value {
+        PlatformImageMemoryCache.shared.store(loadedImage, for: requestedURL, authToken: authToken)
+      }
       return
     }
 
     do {
       let data = try await AuthenticatedMediaDataLoader.load(
         remoteURL: requestedURL,
+        fileName: fileName,
         authToken: authToken
       )
       let loadedImage = await Task.detached(priority: .utility) {
@@ -1395,9 +1415,11 @@ private struct AuthenticatedRemoteImage: View {
         return
       }
       guard let loadedImage = loadedImage.value else {
+        await AuthenticatedMediaCache.shared.removeCachedFile(for: requestedURL, fileName: fileName)
         didFail = true
         return
       }
+      PlatformImageMemoryCache.shared.store(loadedImage, for: requestedURL, authToken: authToken)
       image = loadedImage
       didFail = false
     } catch is CancellationError {
@@ -1453,6 +1475,48 @@ private final class SendablePlatformImage: @unchecked Sendable {
 
   init(_ value: PlatformImage?) {
     self.value = value
+  }
+}
+
+private final class PlatformImageMemoryCache: @unchecked Sendable {
+  static let shared = PlatformImageMemoryCache()
+
+  private let images = NSCache<NSString, PlatformImage>()
+
+  private init() {
+    images.countLimit = 120
+    images.totalCostLimit = 128 * 1_024 * 1_024
+  }
+
+  func image(for url: URL, authToken: String) -> PlatformImage? {
+    images.object(forKey: cacheKey(for: url, authToken: authToken))
+  }
+
+  func store(_ image: PlatformImage, for url: URL, authToken: String) {
+    images.setObject(
+      image,
+      forKey: cacheKey(for: url, authToken: authToken),
+      cost: estimatedMemoryCost(of: image)
+    )
+  }
+
+  func removeImage(for url: URL, authToken: String) {
+    images.removeObject(forKey: cacheKey(for: url, authToken: authToken))
+  }
+
+  private func cacheKey(for url: URL, authToken: String) -> NSString {
+    "\(url.absoluteString)|\(authToken)" as NSString
+  }
+
+  private func estimatedMemoryCost(of image: PlatformImage) -> Int {
+    #if os(iOS)
+      let pixelWidth = image.size.width * image.scale
+      let pixelHeight = image.size.height * image.scale
+    #else
+      let pixelWidth = image.size.width
+      let pixelHeight = image.size.height
+    #endif
+    return max(1, Int(pixelWidth * pixelHeight * 4))
   }
 }
 
@@ -1648,6 +1712,14 @@ actor AuthenticatedMediaCache {
       return nil
     }
     return destinationURL
+  }
+
+  func removeCachedFile(for remoteURL: URL, fileName: String? = nil) async {
+    guard !remoteURL.isFileURL,
+          let destinationURL = try? cacheURL(for: remoteURL, fileName: fileName) else {
+      return
+    }
+    try? FileManager.default.removeItem(at: destinationURL)
   }
 
   func storeLocalFile(at sourceURL: URL, for remoteURL: URL, fileName: String? = nil) async throws {

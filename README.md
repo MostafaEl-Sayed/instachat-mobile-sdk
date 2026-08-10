@@ -115,6 +115,8 @@ Native iOS remote videos stream with authenticated `AVURLAsset` requests rather 
 
 Native iOS image loading validates CDN status codes and retries transient `400`, `404`, `408`, `425`, `429`, `5xx`, and connection failures with the same bounded media policy. A failed thumbnail or full-screen image exposes an inline Retry action, so users do not need to leave and reopen the chat.
 
+Loaded native iOS images use a bounded decoded-image memory cache plus the authenticated disk media cache. Scrolling a loaded bubble off screen and back does not restart its request or show a loader, while chat reopen can reuse the disk copy. Outgoing images are cached during upload reconciliation, and corrupt cache entries are removed before Retry.
+
 ## With Host Adapters
 
 ```tsx

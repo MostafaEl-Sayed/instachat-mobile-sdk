@@ -93,7 +93,8 @@ enum VideoPlaybackSourceResolver {
     for attempt in 0...retryDelaysNanoseconds.count {
       do {
         var request = URLRequest(url: remoteURL)
-        request.httpMethod = "HEAD"
+        request.httpMethod = "GET"
+        request.setValue("bytes=0-1", forHTTPHeaderField: "Range")
         authorizationHeaders(authToken: authToken).forEach {
           request.setValue($0.value, forHTTPHeaderField: $0.key)
         }
@@ -101,7 +102,7 @@ enum VideoPlaybackSourceResolver {
         guard let httpResponse = response as? HTTPURLResponse else {
           throw MediaDownloadError.unavailable
         }
-        if (200..<300).contains(httpResponse.statusCode) || [405, 501].contains(httpResponse.statusCode) {
+        if httpResponse.statusCode == 200 || httpResponse.statusCode == 206 {
           return
         }
         throw MediaDownloadError.httpStatus(httpResponse.statusCode)

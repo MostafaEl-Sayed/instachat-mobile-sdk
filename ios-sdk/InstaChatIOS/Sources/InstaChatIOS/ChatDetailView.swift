@@ -1688,6 +1688,7 @@ actor AuthenticatedMediaCache {
   static let shared = AuthenticatedMediaCache()
 
   private var inFlight: [URL: Task<URL, Error>] = [:]
+  private var outgoingLocalFilesByName: [String: URL] = [:]
 
   func cachedFileExists(for remoteURL: URL, fileName: String? = nil) async -> Bool {
     if remoteURL.isFileURL {
@@ -1707,11 +1708,17 @@ actor AuthenticatedMediaCache {
       return remoteURL
     }
 
-    guard let destinationURL = try? cacheURL(for: remoteURL, fileName: fileName),
-          FileManager.default.fileExists(atPath: destinationURL.path) else {
+    if let destinationURL = try? cacheURL(for: remoteURL, fileName: fileName),
+       FileManager.default.fileExists(atPath: destinationURL.path) {
+      return destinationURL
+    }
+
+    guard let fileName,
+          let aliasedURL = outgoingLocalFilesByName[normalizedFileName(fileName)],
+          FileManager.default.fileExists(atPath: aliasedURL.path) else {
       return nil
     }
-    return destinationURL
+    return aliasedURL
   }
 
   func removeCachedFile(for remoteURL: URL, fileName: String? = nil) async {
@@ -1738,6 +1745,26 @@ actor AuthenticatedMediaCache {
       try FileManager.default.removeItem(at: destinationURL)
     }
     try FileManager.default.moveItem(at: stagedURL, to: destinationURL)
+    registerOutgoingLocalFile(destinationURL, fileName: fileName ?? sourceURL.lastPathComponent)
+  }
+
+  func rekeyCachedFile(
+    from sourceRemoteURL: URL,
+    sourceFileName: String?,
+    to destinationRemoteURL: URL,
+    destinationFileName: String?
+  ) async throws {
+    guard sourceRemoteURL != destinationRemoteURL || sourceFileName != destinationFileName else {
+      return
+    }
+    guard let sourceURL = await existingLocalFileURL(for: sourceRemoteURL, fileName: sourceFileName) else {
+      return
+    }
+    try await storeLocalFile(
+      at: sourceURL,
+      for: destinationRemoteURL,
+      fileName: destinationFileName ?? sourceFileName
+    )
   }
 
   func localFileURL(
@@ -1834,6 +1861,17 @@ actor AuthenticatedMediaCache {
     return cacheDirectory
       .appendingPathComponent(remoteURL.absoluteString.base64URLSafeString)
       .appendingPathExtension(fileExtension)
+  }
+
+  private func registerOutgoingLocalFile(_ localURL: URL, fileName: String?) {
+    guard let fileName, !fileName.isEmpty else {
+      return
+    }
+    outgoingLocalFilesByName[normalizedFileName(fileName)] = localURL
+  }
+
+  private func normalizedFileName(_ fileName: String) -> String {
+    URL(fileURLWithPath: fileName).lastPathComponent.lowercased()
   }
 }
 

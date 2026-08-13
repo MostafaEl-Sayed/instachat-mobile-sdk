@@ -610,13 +610,14 @@ final class InstaChatContractTests: XCTestCase {
 
   @MainActor
   func testVideoUploadBackendEchoAndImmediatePlaybackUsesLocalCache() async throws {
-    let remoteURL = URL(string: "https://instachat.instakit.pro/uploads/video-\(UUID().uuidString).mp4")!
+    let uploadURL = URL(string: "https://instachat.instakit.pro/uploads/video-\(UUID().uuidString).mp4")!
+    let finalBackendURL = URL(string: "https://cdn.digitaloceanspaces.com/final-video-\(UUID().uuidString).mp4")!
     let uploadedAttachment = InstaChatAttachment(
       id: "uploaded-video",
       fileName: "outgoing-video.mp4",
       contentType: "video/mp4",
       type: .video,
-      url: remoteURL
+      url: uploadURL
     )
     let client = StubInstaChatClient()
     client.uploadResults = [.success(uploadedAttachment)]
@@ -631,6 +632,14 @@ final class InstaChatContractTests: XCTestCase {
 
     await store.sendAttachment(fileURL: videoURL, roomID: "room-video", contentType: "video/mp4")
     let localMessage = try XCTUnwrap(store.messages(for: "room-video").first)
+    let finalAttachment = InstaChatAttachment(
+      id: "final-backend-video-id",
+      fileName: uploadedAttachment.fileName,
+      contentType: uploadedAttachment.contentType,
+      type: uploadedAttachment.type,
+      fileSize: uploadedAttachment.fileSize,
+      url: finalBackendURL
+    )
     let backendEcho = Self.message(
       id: "backend-video",
       roomID: "room-video",
@@ -638,7 +647,7 @@ final class InstaChatContractTests: XCTestCase {
       content: uploadedAttachment.fileName,
       type: .file,
       createdAt: localMessage.createdAt.addingTimeInterval(0.1),
-      attachment: uploadedAttachment
+      attachment: finalAttachment
     )
     store.applyRealtimeEvent(.message(backendEcho))
 
@@ -646,14 +655,16 @@ final class InstaChatContractTests: XCTestCase {
     let mediaSession = Self.mediaTestSession()
     defer { mediaSession.invalidateAndCancel() }
     let source = try await VideoPlaybackSourceResolver.resolve(
-      remoteURL: remoteURL,
-      fileName: uploadedAttachment.fileName,
+      remoteURL: finalBackendURL,
+      fileName: finalAttachment.fileName,
       authToken: "token",
       session: mediaSession,
       retryDelaysNanoseconds: []
     )
 
     XCTAssertEqual(store.messages(for: "room-video").map(\.id), ["backend-video"])
+    XCTAssertEqual(store.messages(for: "room-video").first?.attachment?.id, "final-backend-video-id")
+    XCTAssertEqual(store.messages(for: "room-video").first?.attachment?.url, finalBackendURL)
     XCTAssertTrue(source.isLocal)
     XCTAssertEqual(try Data(contentsOf: source.url), videoData)
     XCTAssertEqual(StubMediaURLProtocol.requestCount, 0, "Outgoing video playback must use the preserved local file")
@@ -699,11 +710,32 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(source.url, remoteURL)
     XCTAssertEqual(source.httpHeaders["Authorization"], "Bearer provider-token")
     XCTAssertEqual(StubMediaURLProtocol.requestCount, 3)
-    XCTAssertEqual(StubMediaURLProtocol.requestMethods, ["HEAD", "HEAD", "HEAD"])
+    XCTAssertEqual(StubMediaURLProtocol.requestMethods, ["GET", "GET", "GET"])
+    XCTAssertEqual(StubMediaURLProtocol.rangeHeaders, ["bytes=0-1", "bytes=0-1", "bytes=0-1"])
     XCTAssertEqual(
       StubMediaURLProtocol.authorizationHeaders,
       ["Bearer provider-token", "Bearer provider-token", "Bearer provider-token"]
     )
+  }
+
+  func testProviderVideoRangeProbeAcceptsHTTP200() async throws {
+    let remoteURL = URL(string: "https://cdn.example.com/range-ignored-\(UUID().uuidString).mp4")!
+    StubMediaURLProtocol.reset(statusCodes: [200], responseData: Data([0, 1]))
+    let mediaSession = Self.mediaTestSession()
+    defer { mediaSession.invalidateAndCancel() }
+
+    let source = try await VideoPlaybackSourceResolver.resolve(
+      remoteURL: remoteURL,
+      fileName: "provider-video.mp4",
+      authToken: "provider-token",
+      session: mediaSession,
+      retryDelaysNanoseconds: []
+    )
+
+    XCTAssertEqual(source.url, remoteURL)
+    XCTAssertEqual(StubMediaURLProtocol.requestCount, 1)
+    XCTAssertEqual(StubMediaURLProtocol.requestMethods, ["GET"])
+    XCTAssertEqual(StubMediaURLProtocol.rangeHeaders, ["bytes=0-1"])
   }
 
   func testMediaRetryWindowCoversDelayedCDNAvailability() {
@@ -1026,6 +1058,7 @@ private final class StubMediaURLProtocol: URLProtocol, @unchecked Sendable {
   private static var count = 0
   private static var methods: [String] = []
   private static var authorizations: [String] = []
+  private static var ranges: [String] = []
 
   static var requestCount: Int {
     lock.lock()
@@ -1045,6 +1078,12 @@ private final class StubMediaURLProtocol: URLProtocol, @unchecked Sendable {
     return authorizations
   }
 
+  static var rangeHeaders: [String] {
+    lock.lock()
+    defer { lock.unlock() }
+    return ranges
+  }
+
   static func reset(statusCodes: [Int], responseData: Data = Data()) {
     lock.lock()
     self.statusCodes = statusCodes
@@ -1052,6 +1091,7 @@ private final class StubMediaURLProtocol: URLProtocol, @unchecked Sendable {
     count = 0
     methods = []
     authorizations = []
+    ranges = []
     lock.unlock()
   }
 
@@ -1065,6 +1105,7 @@ private final class StubMediaURLProtocol: URLProtocol, @unchecked Sendable {
     Self.count += 1
     Self.methods.append(request.httpMethod ?? "GET")
     Self.authorizations.append(request.value(forHTTPHeaderField: "Authorization") ?? "")
+    Self.ranges.append(request.value(forHTTPHeaderField: "Range") ?? "")
     let statusCode = Self.statusCodes.indices.contains(index) ? Self.statusCodes[index] : 500
     let responseData = Self.data
     Self.lock.unlock()

@@ -224,6 +224,7 @@ final class InstaChatStore: ObservableObject {
       if let existingIndex = messages.firstIndex(where: { $0.id == fetchedMessage.id }) {
         messages[existingIndex] = fetchedMessage
       } else if let localEchoIndex = localEchoIndex(for: fetchedMessage, in: messages) {
+        reconcileCachedMedia(from: messages[localEchoIndex], to: fetchedMessage)
         resolvePendingMessage(messageID: messages[localEchoIndex].id)
         messages[localEchoIndex] = fetchedMessage
       } else {
@@ -244,6 +245,7 @@ final class InstaChatStore: ObservableObject {
     if let existingIndex = messages.firstIndex(where: { $0.id == message.id }) {
       messages[existingIndex] = message
     } else if let localEchoIndex = localEchoIndex(for: message, in: messages) {
+      reconcileCachedMedia(from: messages[localEchoIndex], to: message)
       resolvePendingMessage(messageID: messages[localEchoIndex].id)
       messages[localEchoIndex] = message
     } else {
@@ -289,6 +291,23 @@ final class InstaChatStore: ObservableObject {
         return false
       }
       return candidate.localEchoKey == message.localEchoKey
+    }
+  }
+
+  private func reconcileCachedMedia(from localMessage: InstaChatMessage, to backendMessage: InstaChatMessage) {
+    guard let localAttachment = localMessage.attachment,
+          let backendAttachment = backendMessage.attachment,
+          localAttachment.type == backendAttachment.type else {
+      return
+    }
+
+    Task {
+      try? await AuthenticatedMediaCache.shared.rekeyCachedFile(
+        from: localAttachment.url,
+        sourceFileName: localAttachment.fileName,
+        to: backendAttachment.url,
+        destinationFileName: backendAttachment.fileName
+      )
     }
   }
 
@@ -457,7 +476,9 @@ final class InstaChatStore: ObservableObject {
 
 extension InstaChatMessage {
   var localEchoKey: String {
-    let attachmentKey = attachment?.id ?? ""
+    let attachmentKey = attachment.map {
+      [$0.type.rawValue, $0.fileName, $0.contentType].joined(separator: ":")
+    } ?? ""
     let locationKey = location.map { "\($0.latitude):\($0.longitude):\($0.name ?? "")" } ?? ""
     return [roomID, senderID, type.rawValue, content, attachmentKey, locationKey].joined(separator: "|")
   }

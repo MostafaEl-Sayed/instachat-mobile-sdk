@@ -111,7 +111,9 @@ Newly sent native iOS voice notes play from the preserved local recording while 
 
 Native iOS image and video previews retain the exact tapped message/attachment identity even when the chat list recycles rows. Media loading is keyed by URL, mixed image/video/voice histories remain chronologically ordered, and the full voice-note row is available as the playback target.
 
-Native iOS remote videos stream with authenticated `AVURLAsset` requests rather than waiting for a full-file download. Transient CDN readiness failures use a bounded 15.5-second retry window and the preview provides a visible Retry action. Outgoing videos use their preserved local upload copy immediately after backend reconciliation.
+Native iOS remote videos stream with authenticated `AVURLAsset` requests rather than waiting for a full-file download. Readiness uses authenticated `GET` with `Range: bytes=0-1`, accepts `200`/`206`, and avoids relying on `HEAD`. Transient CDN readiness failures use a bounded 15.5-second retry window and the preview provides a visible Retry action.
+
+Outgoing media reconciliation tolerates changed backend attachment IDs and final CDN URLs. Stable media metadata replaces the optimistic message once, and the preserved local upload is re-keyed to the final URL so newly sent videos play locally with zero CDN wait. Received media that remains unavailable after SDK retries must be held by the backend until an authenticated CDN `GET` or Range request succeeds with `200`/`206`.
 
 Native iOS image loading validates CDN status codes and retries transient `400`, `404`, `408`, `425`, `429`, `5xx`, and connection failures with the same bounded media policy. A failed thumbnail or full-screen image exposes an inline Retry action, so users do not need to leave and reopen the chat.
 

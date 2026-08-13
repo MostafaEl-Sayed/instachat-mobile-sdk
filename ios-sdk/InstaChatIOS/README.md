@@ -111,7 +111,11 @@ Newly recorded voice notes are copied into the authenticated media cache before 
 
 Image and video previews are selected by the exact message and attachment identity. Scrolling or SwiftUI row reuse cannot redirect a tap to another media item, and image/video loaders reset whenever the selected URL changes. The complete voice-note row is tappable while playback remains owned by the chat screen, so it continues when its bubble scrolls off screen.
 
-Remote videos stream through `AVURLAsset`/`AVPlayerItem` with the SDK authentication header instead of downloading the complete file before playback. The SDK retries transient CDN readiness responses for up to approximately 15.5 seconds, then keeps the preview open with a clear Retry button. Newly sent videos are copied to the authenticated media cache during upload reconciliation and play from that local copy immediately.
+Remote videos stream through `AVURLAsset`/`AVPlayerItem` with the SDK authentication header instead of downloading the complete file before playback. Readiness checks use authenticated `GET` with `Range: bytes=0-1` and accept `200` or `206`, avoiding CDN incompatibilities with `HEAD`. The SDK retries transient CDN readiness responses for up to approximately 15.5 seconds, then keeps the preview open with a clear Retry button.
+
+Newly sent videos are copied to the authenticated media cache during upload. When the backend echo changes the attachment ID or CDN URL, local-echo matching uses stable media metadata and re-keys the preserved file to the final backend URL. Immediate playback therefore stays local and does not wait for CDN propagation.
+
+Received media that remains unavailable after the bounded retry window indicates that the backend published its attachment before the CDN object was readable. The backend should verify an authenticated `GET` or Range request returns `200`/`206` before broadcasting the media message.
 
 Authenticated image requests validate HTTP responses before decoding and use the same bounded retry policy for `400`, `404`, `408`, `425`, `429`, server errors, and transient connection failures. When automatic recovery is exhausted, the image bubble and full-screen preview show a visible Retry action that starts a fresh request without reopening the chat.
 

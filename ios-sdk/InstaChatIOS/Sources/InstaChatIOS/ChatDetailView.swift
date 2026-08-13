@@ -114,7 +114,7 @@ struct ChatDetailView: View {
     .mediaPreviewCover(item: $mediaPreviewSelection) { selection in
       MediaPreviewScreen(
         attachment: selection.attachment,
-        mediaAuthToken: store.configuration.token
+        mediaAuthorization: mediaAuthorization
       )
       .id(selection.id)
     }
@@ -156,7 +156,7 @@ struct ChatDetailView: View {
             MessageBubbleView(
               message: message,
               isCurrentUser: message.senderID == store.configuration.user.id,
-              mediaAuthToken: store.configuration.token,
+              mediaAuthorization: mediaAuthorization,
               voicePlaybackController: voicePlaybackController,
               deliveryState: store.deliveryState(for: message.id),
               onRetry: {
@@ -190,6 +190,13 @@ struct ChatDetailView: View {
         scrollToBottom(proxy, animated: false)
       }
     }
+  }
+
+  private var mediaAuthorization: MediaRequestAuthorization {
+    MediaRequestAuthorization(
+      apiBaseURL: store.configuration.baseURL,
+      bearerToken: store.configuration.token
+    )
   }
 
   private var composer: some View {
@@ -747,7 +754,7 @@ private struct AttachmentPanelItem: View {
 private struct MessageBubbleView: View {
   var message: InstaChatMessage
   var isCurrentUser: Bool
-  var mediaAuthToken: String
+  var mediaAuthorization: MediaRequestAuthorization
   @ObservedObject var voicePlaybackController: VoiceNotePlaybackController
   var deliveryState: OutgoingMessageDeliveryState?
   var onRetry: () -> Void
@@ -824,7 +831,7 @@ private struct MessageBubbleView: View {
         AttachmentBubble(
           attachment: attachment,
           isCurrentUser: isCurrentUser,
-          mediaAuthToken: mediaAuthToken,
+          mediaAuthorization: mediaAuthorization,
           voicePlaybackController: voicePlaybackController,
           onPreview: onPreviewAttachment
         )
@@ -907,7 +914,7 @@ enum PlatformURLOpener {
 private struct AttachmentBubble: View {
   var attachment: InstaChatAttachment
   var isCurrentUser: Bool
-  var mediaAuthToken: String
+  var mediaAuthorization: MediaRequestAuthorization
   @ObservedObject var voicePlaybackController: VoiceNotePlaybackController
   var onPreview: (InstaChatAttachment) -> Void
 
@@ -930,7 +937,7 @@ private struct AttachmentBubble: View {
         VoiceNoteBubble(
           attachment: attachment,
           isCurrentUser: isCurrentUser,
-          mediaAuthToken: mediaAuthToken,
+          mediaAuthorization: mediaAuthorization,
           playbackController: voicePlaybackController
         )
           .bubbleStyle(isCurrentUser: isCurrentUser)
@@ -945,7 +952,7 @@ private struct AttachmentBubble: View {
     AuthenticatedRemoteImage(
       url: attachment.url,
       fileName: attachment.fileName,
-      authToken: mediaAuthToken,
+      authorization: mediaAuthorization,
       contentMode: .fill,
       onOpen: { onPreview(attachment) },
       openAccessibilityLabel: "Open image \(attachment.fileName)"
@@ -975,7 +982,7 @@ private struct AttachmentBubble: View {
 private struct VoiceNoteBubble: View {
   var attachment: InstaChatAttachment
   var isCurrentUser: Bool
-  var mediaAuthToken: String
+  var mediaAuthorization: MediaRequestAuthorization
   @ObservedObject var playbackController: VoiceNotePlaybackController
 
   private var isPlaying: Bool {
@@ -1026,7 +1033,7 @@ private struct VoiceNoteBubble: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 7) {
       Button {
-        playbackController.toggle(attachment: attachment, authToken: mediaAuthToken)
+        playbackController.toggle(attachment: attachment, authorization: mediaAuthorization)
       } label: {
         HStack(spacing: 10) {
           ZStack {
@@ -1063,7 +1070,7 @@ private struct VoiceNoteBubble: View {
             .foregroundStyle(isCurrentUser ? .white.opacity(0.82) : .secondary)
 
           Button {
-            playbackController.toggle(attachment: attachment, authToken: mediaAuthToken)
+            playbackController.toggle(attachment: attachment, authorization: mediaAuthorization)
           } label: {
             Label("Retry", systemImage: "arrow.clockwise")
               .font(.caption.weight(.semibold))
@@ -1138,7 +1145,7 @@ private final class VoiceNotePlaybackController: ObservableObject {
     }
   }
 
-  func toggle(attachment: InstaChatAttachment, authToken: String) {
+  func toggle(attachment: InstaChatAttachment, authorization: MediaRequestAuthorization) {
     if activeAttachmentID == attachment.id {
       stop()
       return
@@ -1154,7 +1161,7 @@ private final class VoiceNotePlaybackController: ObservableObject {
       do {
         let localURL = try await AuthenticatedMediaCache.shared.localFileURL(
           for: attachment.url,
-          authToken: authToken,
+          authorization: authorization,
           fileName: attachment.fileName
         )
         await MainActor.run {
@@ -1256,7 +1263,7 @@ private final class VoiceNotePlaybackController: ObservableObject {
 
 private struct MediaPreviewScreen: View {
   var attachment: InstaChatAttachment
-  var mediaAuthToken: String
+  var mediaAuthorization: MediaRequestAuthorization
   @Environment(\.dismiss) private var dismiss
 
   var body: some View {
@@ -1267,7 +1274,7 @@ private struct MediaPreviewScreen: View {
           AuthenticatedRemoteImage(
             url: attachment.url,
             fileName: attachment.fileName,
-            authToken: mediaAuthToken,
+            authorization: mediaAuthorization,
             contentMode: .fit
           )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1275,7 +1282,7 @@ private struct MediaPreviewScreen: View {
           VideoPreviewPlayer(
             url: attachment.url,
             fileName: attachment.fileName,
-            authToken: mediaAuthToken
+            authorization: mediaAuthorization
           )
             .ignoresSafeArea(edges: .bottom)
         } else {
@@ -1313,7 +1320,7 @@ private struct MediaPreviewScreen: View {
 private struct AuthenticatedRemoteImage: View {
   var url: URL
   var fileName: String?
-  var authToken: String
+  var authorization: MediaRequestAuthorization
   var contentMode: ContentMode
   var onOpen: (() -> Void)?
   var openAccessibilityLabel: String?
@@ -1325,18 +1332,18 @@ private struct AuthenticatedRemoteImage: View {
   init(
     url: URL,
     fileName: String? = nil,
-    authToken: String,
+    authorization: MediaRequestAuthorization,
     contentMode: ContentMode,
     onOpen: (() -> Void)? = nil,
     openAccessibilityLabel: String? = nil
   ) {
     self.url = url
     self.fileName = fileName
-    self.authToken = authToken
+    self.authorization = authorization
     self.contentMode = contentMode
     self.onOpen = onOpen
     self.openAccessibilityLabel = openAccessibilityLabel
-    _image = State(initialValue: PlatformImageMemoryCache.shared.image(for: url, authToken: authToken))
+    _image = State(initialValue: PlatformImageMemoryCache.shared.image(for: url, authorization: authorization))
   }
 
   var body: some View {
@@ -1352,7 +1359,7 @@ private struct AuthenticatedRemoteImage: View {
                 .font(.system(size: 24, weight: .medium))
                 .foregroundStyle(.secondary)
               Button {
-                PlatformImageMemoryCache.shared.removeImage(for: url, authToken: authToken)
+                PlatformImageMemoryCache.shared.removeImage(for: url, authorization: authorization)
                 retryGeneration &+= 1
               } label: {
                 Label("Retry", systemImage: "arrow.clockwise")
@@ -1374,7 +1381,7 @@ private struct AuthenticatedRemoteImage: View {
     }
     .clipped()
     .task(id: ImageLoadRequest(url: url, retryGeneration: retryGeneration)) {
-      if let cachedImage = PlatformImageMemoryCache.shared.image(for: url, authToken: authToken) {
+      if let cachedImage = PlatformImageMemoryCache.shared.image(for: url, authorization: authorization) {
         image = cachedImage
         didFail = false
         return
@@ -1397,7 +1404,7 @@ private struct AuthenticatedRemoteImage: View {
       image = loadedImage.value
       didFail = loadedImage.value == nil
       if let loadedImage = loadedImage.value {
-        PlatformImageMemoryCache.shared.store(loadedImage, for: requestedURL, authToken: authToken)
+        PlatformImageMemoryCache.shared.store(loadedImage, for: requestedURL, authorization: authorization)
       }
       return
     }
@@ -1406,7 +1413,7 @@ private struct AuthenticatedRemoteImage: View {
       let data = try await AuthenticatedMediaDataLoader.load(
         remoteURL: requestedURL,
         fileName: fileName,
-        authToken: authToken
+        authorization: authorization
       )
       let loadedImage = await Task.detached(priority: .utility) {
         SendablePlatformImage(PlatformImage(data: data))
@@ -1419,7 +1426,7 @@ private struct AuthenticatedRemoteImage: View {
         didFail = true
         return
       }
-      PlatformImageMemoryCache.shared.store(loadedImage, for: requestedURL, authToken: authToken)
+      PlatformImageMemoryCache.shared.store(loadedImage, for: requestedURL, authorization: authorization)
       image = loadedImage
       didFail = false
     } catch is CancellationError {
@@ -1488,24 +1495,24 @@ private final class PlatformImageMemoryCache: @unchecked Sendable {
     images.totalCostLimit = 128 * 1_024 * 1_024
   }
 
-  func image(for url: URL, authToken: String) -> PlatformImage? {
-    images.object(forKey: cacheKey(for: url, authToken: authToken))
+  func image(for url: URL, authorization: MediaRequestAuthorization) -> PlatformImage? {
+    images.object(forKey: cacheKey(for: url, authorization: authorization))
   }
 
-  func store(_ image: PlatformImage, for url: URL, authToken: String) {
+  func store(_ image: PlatformImage, for url: URL, authorization: MediaRequestAuthorization) {
     images.setObject(
       image,
-      forKey: cacheKey(for: url, authToken: authToken),
+      forKey: cacheKey(for: url, authorization: authorization),
       cost: estimatedMemoryCost(of: image)
     )
   }
 
-  func removeImage(for url: URL, authToken: String) {
-    images.removeObject(forKey: cacheKey(for: url, authToken: authToken))
+  func removeImage(for url: URL, authorization: MediaRequestAuthorization) {
+    images.removeObject(forKey: cacheKey(for: url, authorization: authorization))
   }
 
-  private func cacheKey(for url: URL, authToken: String) -> NSString {
-    "\(url.absoluteString)|\(authToken)" as NSString
+  private func cacheKey(for url: URL, authorization: MediaRequestAuthorization) -> NSString {
+    "\(url.absoluteString)|\(authorization.cacheScope)" as NSString
   }
 
   private func estimatedMemoryCost(of image: PlatformImage) -> Int {
@@ -1523,7 +1530,7 @@ private final class PlatformImageMemoryCache: @unchecked Sendable {
 private struct VideoPreviewPlayer: View {
   let url: URL
   let fileName: String
-  let authToken: String
+  let authorization: MediaRequestAuthorization
   @StateObject private var playbackController = VideoPreviewPlaybackController()
 
   var body: some View {
@@ -1551,7 +1558,7 @@ private struct VideoPreviewPlayer: View {
             playbackController.load(
               url: url,
               fileName: fileName,
-              authToken: authToken,
+              authorization: authorization,
               force: true
             )
           } label: {
@@ -1568,7 +1575,7 @@ private struct VideoPreviewPlayer: View {
       }
     }
       .task(id: VideoPlaybackRequest(url: url, fileName: fileName)) {
-        playbackController.load(url: url, fileName: fileName, authToken: authToken)
+        playbackController.load(url: url, fileName: fileName, authorization: authorization)
       }
       .onDisappear {
         playbackController.stop()
@@ -1596,7 +1603,12 @@ private final class VideoPreviewPlaybackController: ObservableObject {
     statusObservation?.invalidate()
   }
 
-  func load(url: URL, fileName: String, authToken: String, force: Bool = false) {
+  func load(
+    url: URL,
+    fileName: String,
+    authorization: MediaRequestAuthorization,
+    force: Bool = false
+  ) {
     let request = VideoPlaybackRequest(url: url, fileName: fileName)
     guard force || request != activeRequest else {
       return
@@ -1612,7 +1624,7 @@ private final class VideoPreviewPlaybackController: ObservableObject {
         let source = try await VideoPlaybackSourceResolver.resolve(
           remoteURL: url,
           fileName: fileName,
-          authToken: authToken
+          authorization: authorization
         )
         try Task.checkCancellation()
         self?.installPlayer(source: source, request: request)
@@ -1769,7 +1781,7 @@ actor AuthenticatedMediaCache {
 
   func localFileURL(
     for remoteURL: URL,
-    authToken: String,
+    authorization: MediaRequestAuthorization,
     fileName: String? = nil,
     session: URLSession = .shared,
     retryDelaysNanoseconds: [UInt64] = MediaRetryPolicy.defaultRetryDelaysNanoseconds
@@ -1790,7 +1802,7 @@ actor AuthenticatedMediaCache {
     let task = Task<URL, Error> {
       let temporaryURL = try await Self.downloadWithRetry(
         remoteURL: remoteURL,
-        authToken: authToken,
+        authorization: authorization,
         session: session,
         retryDelaysNanoseconds: retryDelaysNanoseconds
       )
@@ -1817,7 +1829,7 @@ actor AuthenticatedMediaCache {
 
   private static func downloadWithRetry(
     remoteURL: URL,
-    authToken: String,
+    authorization: MediaRequestAuthorization,
     session: URLSession,
     retryDelaysNanoseconds: [UInt64]
   ) async throws -> URL {
@@ -1826,7 +1838,9 @@ actor AuthenticatedMediaCache {
     for attempt in 0...retryDelaysNanoseconds.count {
       do {
         var request = URLRequest(url: remoteURL)
-        request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        authorization.headers(for: remoteURL).forEach {
+          request.setValue($0.value, forHTTPHeaderField: $0.key)
+        }
         let (temporaryURL, response) = try await session.download(for: request)
 
         if let httpResponse = response as? HTTPURLResponse,

@@ -598,7 +598,7 @@ final class InstaChatContractTests: XCTestCase {
     defer { mediaSession.invalidateAndCancel() }
     let cachedURL = try await AuthenticatedMediaCache.shared.localFileURL(
       for: remoteURL,
-      authToken: "token",
+      authorization: Self.mediaAuthorization(),
       fileName: uploadedAttachment.fileName,
       session: mediaSession
     )
@@ -657,7 +657,7 @@ final class InstaChatContractTests: XCTestCase {
     let source = try await VideoPlaybackSourceResolver.resolve(
       remoteURL: finalBackendURL,
       fileName: finalAttachment.fileName,
-      authToken: "token",
+      authorization: Self.mediaAuthorization(),
       session: mediaSession,
       retryDelaysNanoseconds: []
     )
@@ -701,20 +701,20 @@ final class InstaChatContractTests: XCTestCase {
     let source = try await VideoPlaybackSourceResolver.resolve(
       remoteURL: receivedAttachment.url,
       fileName: receivedAttachment.fileName,
-      authToken: "provider-token",
+      authorization: Self.mediaAuthorization(token: "provider-token"),
       session: mediaSession,
       retryDelaysNanoseconds: [0, 0]
     )
 
     XCTAssertFalse(source.isLocal)
     XCTAssertEqual(source.url, remoteURL)
-    XCTAssertEqual(source.httpHeaders["Authorization"], "Bearer provider-token")
+    XCTAssertNil(source.httpHeaders["Authorization"])
     XCTAssertEqual(StubMediaURLProtocol.requestCount, 3)
     XCTAssertEqual(StubMediaURLProtocol.requestMethods, ["GET", "GET", "GET"])
     XCTAssertEqual(StubMediaURLProtocol.rangeHeaders, ["bytes=0-1", "bytes=0-1", "bytes=0-1"])
     XCTAssertEqual(
       StubMediaURLProtocol.authorizationHeaders,
-      ["Bearer provider-token", "Bearer provider-token", "Bearer provider-token"]
+      ["", "", ""]
     )
   }
 
@@ -727,7 +727,7 @@ final class InstaChatContractTests: XCTestCase {
     let source = try await VideoPlaybackSourceResolver.resolve(
       remoteURL: remoteURL,
       fileName: "provider-video.mp4",
-      authToken: "provider-token",
+      authorization: Self.mediaAuthorization(token: "provider-token"),
       session: mediaSession,
       retryDelaysNanoseconds: []
     )
@@ -736,6 +736,28 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(StubMediaURLProtocol.requestCount, 1)
     XCTAssertEqual(StubMediaURLProtocol.requestMethods, ["GET"])
     XCTAssertEqual(StubMediaURLProtocol.rangeHeaders, ["bytes=0-1"])
+    XCTAssertEqual(StubMediaURLProtocol.authorizationHeaders, [""])
+  }
+
+  func testAPIHostVideoProbeAndPlayerRetainAuthorization() async throws {
+    let remoteURL = URL(string: "https://instachat.instakit.pro/media/video-\(UUID().uuidString).mp4")!
+    StubMediaURLProtocol.reset(statusCodes: [206], responseData: Data([0, 1]))
+    let mediaSession = Self.mediaTestSession()
+    defer { mediaSession.invalidateAndCancel() }
+
+    let source = try await VideoPlaybackSourceResolver.resolve(
+      remoteURL: remoteURL,
+      fileName: "proxied-video.mp4",
+      authorization: Self.mediaAuthorization(token: "api-token"),
+      session: mediaSession,
+      retryDelaysNanoseconds: []
+    )
+
+    XCTAssertEqual(source.url, remoteURL)
+    XCTAssertEqual(source.httpHeaders["Authorization"], "Bearer api-token")
+    XCTAssertEqual(StubMediaURLProtocol.requestMethods, ["GET"])
+    XCTAssertEqual(StubMediaURLProtocol.rangeHeaders, ["bytes=0-1"])
+    XCTAssertEqual(StubMediaURLProtocol.authorizationHeaders, ["Bearer api-token"])
   }
 
   func testMediaRetryWindowCoversDelayedCDNAvailability() {
@@ -758,14 +780,14 @@ final class InstaChatContractTests: XCTestCase {
     let result = try await AuthenticatedMediaDataLoader.load(
       remoteURL: remoteURL,
       fileName: "cached-image.jpg",
-      authToken: "image-token",
+      authorization: Self.mediaAuthorization(token: "image-token"),
       session: mediaSession,
       retryDelaysNanoseconds: [0, 0, 0, 0, 0, 0]
     )
     let cachedResult = try await AuthenticatedMediaDataLoader.load(
       remoteURL: remoteURL,
       fileName: "cached-image.jpg",
-      authToken: "image-token",
+      authorization: Self.mediaAuthorization(token: "image-token"),
       session: mediaSession,
       retryDelaysNanoseconds: []
     )
@@ -776,7 +798,7 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(StubMediaURLProtocol.requestMethods, Array(repeating: "GET", count: 7))
     XCTAssertEqual(
       StubMediaURLProtocol.authorizationHeaders,
-      Array(repeating: "Bearer image-token", count: 7)
+      Array(repeating: "", count: 7)
     )
   }
 
@@ -789,7 +811,7 @@ final class InstaChatContractTests: XCTestCase {
     do {
       _ = try await AuthenticatedMediaDataLoader.load(
         remoteURL: remoteURL,
-        authToken: "invalid-token",
+        authorization: Self.mediaAuthorization(token: "invalid-token"),
         session: mediaSession,
         retryDelaysNanoseconds: [0]
       )
@@ -801,6 +823,25 @@ final class InstaChatContractTests: XCTestCase {
     }
 
     XCTAssertEqual(StubMediaURLProtocol.requestCount, 1)
+  }
+
+  func testAPIHostMediaProxyRetainsAuthorization() async throws {
+    let remoteURL = URL(string: "https://instachat.instakit.pro/media/image-\(UUID().uuidString).jpg")!
+    let imageData = Data("proxied-image".utf8)
+    StubMediaURLProtocol.reset(statusCodes: [200], responseData: imageData)
+    let mediaSession = Self.mediaTestSession()
+    defer { mediaSession.invalidateAndCancel() }
+
+    let result = try await AuthenticatedMediaDataLoader.load(
+      remoteURL: remoteURL,
+      fileName: "proxied-image-\(UUID().uuidString).jpg",
+      authorization: Self.mediaAuthorization(token: "api-token"),
+      session: mediaSession,
+      retryDelaysNanoseconds: []
+    )
+
+    XCTAssertEqual(result, imageData)
+    XCTAssertEqual(StubMediaURLProtocol.authorizationHeaders, ["Bearer api-token"])
   }
 
   @MainActor
@@ -842,7 +883,7 @@ final class InstaChatContractTests: XCTestCase {
     let cachedData = try await AuthenticatedMediaDataLoader.load(
       remoteURL: remoteURL,
       fileName: uploadedAttachment.fileName,
-      authToken: "token",
+      authorization: Self.mediaAuthorization(),
       session: mediaSession,
       retryDelaysNanoseconds: []
     )
@@ -874,14 +915,40 @@ final class InstaChatContractTests: XCTestCase {
 
     let localURL = try await AuthenticatedMediaCache.shared.localFileURL(
       for: remoteURL,
-      authToken: "token",
+      authorization: Self.mediaAuthorization(),
       fileName: "voice-note.m4a",
       session: mediaSession,
       retryDelaysNanoseconds: [0, 0]
     )
 
     XCTAssertEqual(StubMediaURLProtocol.requestCount, 3)
+    XCTAssertEqual(StubMediaURLProtocol.authorizationHeaders, ["", "", ""])
     XCTAssertEqual(try Data(contentsOf: localURL), Data("cdn-audio".utf8))
+  }
+
+  func testMediaAuthorizationIsLimitedToExactAPIOrigin() {
+    let authorization = Self.mediaAuthorization(token: "secret-token")
+
+    XCTAssertEqual(
+      authorization.headers(for: URL(string: "https://instachat.instakit.pro/media/file.pdf")!),
+      ["Authorization": "Bearer secret-token"]
+    )
+    XCTAssertEqual(
+      authorization.headers(for: URL(string: "https://instachat.instakit.pro:443/media/file.pdf")!),
+      ["Authorization": "Bearer secret-token"]
+    )
+    XCTAssertTrue(
+      authorization.headers(for: URL(string: "https://instachat.fra1.cdn.digitaloceanspaces.com/file.pdf")!).isEmpty
+    )
+    XCTAssertTrue(
+      authorization.headers(for: URL(string: "https://cdn.instachat.instakit.pro/file.pdf")!).isEmpty
+    )
+    XCTAssertTrue(
+      authorization.headers(for: URL(string: "http://instachat.instakit.pro/media/file.pdf")!).isEmpty
+    )
+    XCTAssertTrue(
+      authorization.headers(for: URL(string: "https://instachat.instakit.pro:8443/media/file.pdf")!).isEmpty
+    )
   }
 
   func testMediaPreflightLimitsMatchSDKContract() {
@@ -940,6 +1007,13 @@ final class InstaChatContractTests: XCTestCase {
       token: "token",
       user: InstaChatUser(id: "user-1", name: "Mostafa")
     )
+  }
+
+  private static func mediaAuthorization(
+    token: String = "token",
+    apiBaseURL: URL = URL(string: "https://instachat.instakit.pro")!
+  ) -> MediaRequestAuthorization {
+    MediaRequestAuthorization(apiBaseURL: apiBaseURL, bearerToken: token)
   }
 
   private static func date(_ seconds: TimeInterval) -> Date {

@@ -1,5 +1,38 @@
 import Foundation
 
+struct MediaRequestAuthorization: Hashable, Sendable {
+  var apiBaseURL: URL
+  var bearerToken: String
+
+  func headers(for mediaURL: URL) -> [String: String] {
+    guard !bearerToken.isEmpty,
+          mediaURL.scheme?.lowercased() == apiBaseURL.scheme?.lowercased(),
+          mediaURL.host?.lowercased() == apiBaseURL.host?.lowercased(),
+          effectivePort(for: mediaURL) == effectivePort(for: apiBaseURL) else {
+      return [:]
+    }
+    return ["Authorization": "Bearer \(bearerToken)"]
+  }
+
+  var cacheScope: String {
+    "\(apiBaseURL.scheme ?? "")://\(apiBaseURL.host ?? ""):Bearer-\(bearerToken.hashValue)"
+  }
+
+  private func effectivePort(for url: URL) -> Int? {
+    if let port = url.port {
+      return port
+    }
+    switch url.scheme?.lowercased() {
+    case "https":
+      return 443
+    case "http":
+      return 80
+    default:
+      return nil
+    }
+  }
+}
+
 struct VideoPlaybackSource: Equatable, Sendable {
   var url: URL
   var httpHeaders: [String: String]
@@ -37,13 +70,13 @@ enum AuthenticatedMediaDataLoader {
   static func load(
     remoteURL: URL,
     fileName: String? = nil,
-    authToken: String,
+    authorization: MediaRequestAuthorization,
     session: URLSession = .shared,
     retryDelaysNanoseconds: [UInt64] = MediaRetryPolicy.defaultRetryDelaysNanoseconds
   ) async throws -> Data {
     let localURL = try await AuthenticatedMediaCache.shared.localFileURL(
       for: remoteURL,
-      authToken: authToken,
+      authorization: authorization,
       fileName: fileName,
       session: session,
       retryDelaysNanoseconds: retryDelaysNanoseconds
@@ -58,7 +91,7 @@ enum VideoPlaybackSourceResolver {
   static func resolve(
     remoteURL: URL,
     fileName: String,
-    authToken: String,
+    authorization: MediaRequestAuthorization,
     session: URLSession = .shared,
     retryDelaysNanoseconds: [UInt64] = MediaRetryPolicy.defaultRetryDelaysNanoseconds
   ) async throws -> VideoPlaybackSource {
@@ -71,20 +104,20 @@ enum VideoPlaybackSourceResolver {
 
     try await waitUntilRemoteVideoIsReady(
       remoteURL: remoteURL,
-      authToken: authToken,
+      authorization: authorization,
       session: session,
       retryDelaysNanoseconds: retryDelaysNanoseconds
     )
 
     return VideoPlaybackSource(
       url: remoteURL,
-      httpHeaders: authorizationHeaders(authToken: authToken)
+      httpHeaders: authorization.headers(for: remoteURL)
     )
   }
 
   private static func waitUntilRemoteVideoIsReady(
     remoteURL: URL,
-    authToken: String,
+    authorization: MediaRequestAuthorization,
     session: URLSession,
     retryDelaysNanoseconds: [UInt64]
   ) async throws {
@@ -95,7 +128,7 @@ enum VideoPlaybackSourceResolver {
         var request = URLRequest(url: remoteURL)
         request.httpMethod = "GET"
         request.setValue("bytes=0-1", forHTTPHeaderField: "Range")
-        authorizationHeaders(authToken: authToken).forEach {
+        authorization.headers(for: remoteURL).forEach {
           request.setValue($0.value, forHTTPHeaderField: $0.key)
         }
         let (_, response) = try await session.data(for: request)
@@ -118,10 +151,4 @@ enum VideoPlaybackSourceResolver {
     throw latestError
   }
 
-  private static func authorizationHeaders(authToken: String) -> [String: String] {
-    guard !authToken.isEmpty else {
-      return [:]
-    }
-    return ["Authorization": "Bearer \(authToken)"]
-  }
 }

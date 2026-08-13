@@ -514,6 +514,7 @@ struct BackendRoomLastMessage: Decodable {
   var content: String
   var type: InstaChatMessageType
   var createdAt: Date
+  var attachments: [BackendRoomPreviewAttachment]?
 
   enum CodingKeys: String, CodingKey {
     case id
@@ -521,19 +522,42 @@ struct BackendRoomLastMessage: Decodable {
     case content
     case type
     case createdAt = "created_at"
+    case attachments
   }
 
   var summary: String {
     switch type {
     case .text:
-      return content
+      return content.isEmpty ? "Message" : content
     case .image:
-      return "Photo"
+      return InstaChatAttachmentType.image.roomPreviewText
     case .file:
-      return "Attachment"
+      return (attachments?.first?.resolvedType ?? MimeTypeResolver.attachmentType(forFileName: content)).roomPreviewText
     case .location:
       return "Location"
     }
+  }
+}
+
+struct BackendRoomPreviewAttachment: Decodable {
+  var fileName: String?
+  var contentType: String?
+  var type: InstaChatAttachmentType?
+
+  enum CodingKeys: String, CodingKey {
+    case fileName = "file_name"
+    case contentType = "content_type"
+    case type
+  }
+
+  var resolvedType: InstaChatAttachmentType {
+    if let type {
+      return type
+    }
+    if let contentType, !contentType.isEmpty {
+      return MimeTypeResolver.attachmentType(for: contentType)
+    }
+    return MimeTypeResolver.attachmentType(forFileName: fileName ?? "")
   }
 }
 
@@ -733,6 +757,25 @@ enum MimeTypeResolver {
       return .audio
     }
     return .file
+  }
+
+  static func attachmentType(forFileName fileName: String) -> InstaChatAttachmentType {
+    attachmentType(for: mimeType(for: URL(fileURLWithPath: fileName)))
+  }
+}
+
+extension InstaChatAttachmentType {
+  var roomPreviewText: String {
+    switch self {
+    case .image:
+      return "Photo"
+    case .video:
+      return "Video"
+    case .audio:
+      return "Voice note"
+    case .file:
+      return "File"
+    }
   }
 }
 

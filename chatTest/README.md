@@ -2,7 +2,7 @@
 
 Small native SwiftUI iOS app for validating the `InstaChatIOS` SDK integration.
 
-The sample project depends on the public Swift Package at `https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git` starting from `v0.1.28`.
+The sample project depends on the public Swift Package at `https://github.com/MostafaEl-Sayed/instachat-mobile-sdk.git` starting from `v0.1.29`.
 
 ## Open
 
@@ -30,6 +30,7 @@ INSTACHAT_AUTO_OPEN_CHAT=1
 - Host-app start-chat flow: Grandizar backend returns `room_id`, then the SDK opens that room.
 - One-button chat launch.
 - SDK-owned photo, video, location, and real voice-note controls.
+- Generic room-list media previews that never display uploaded filenames.
 - Exact image/video preview selection, including mixed-media conversations and recycled list rows.
 - Streamed remote video playback with origin-scoped authentication, delayed-CDN retry, and an explicit preview Retry button.
 - Immediate local playback for newly sent videos while their CDN copy becomes available.

@@ -327,13 +327,13 @@ final class InstaChatContractTests: XCTestCase {
           createdAt: Self.date(1),
           location: InstaChatLocation(latitude: 30, longitude: 31, name: "Cairo")
         ),
-        "Cairo"
+        "Location"
       ),
       (
         Self.message(
           id: "image",
           roomID: "room-image",
-          content: "",
+          content: "holiday-photo.png",
           type: .image,
           createdAt: Self.date(2),
           attachment: Self.attachment(type: .image, fileName: "photo.png", contentType: "image/png")
@@ -344,7 +344,7 @@ final class InstaChatContractTests: XCTestCase {
         Self.message(
           id: "video",
           roomID: "room-video",
-          content: "",
+          content: "local-12345-video.mov",
           type: .file,
           createdAt: Self.date(3),
           attachment: Self.attachment(type: .video, fileName: "clip.mp4", contentType: "video/mp4")
@@ -355,7 +355,7 @@ final class InstaChatContractTests: XCTestCase {
         Self.message(
           id: "voice",
           roomID: "room-voice",
-          content: "",
+          content: "local-67890-recording.m4a",
           type: .file,
           createdAt: Self.date(4),
           attachment: Self.attachment(type: .audio, fileName: "voice.m4a", contentType: "audio/mp4")
@@ -366,7 +366,7 @@ final class InstaChatContractTests: XCTestCase {
         Self.message(
           id: "file",
           roomID: "room-file",
-          content: "",
+          content: "customer-contract.pdf",
           type: .file,
           createdAt: Self.date(5),
           attachment: Self.attachment(type: .file, fileName: "contract.pdf", contentType: "application/pdf")
@@ -378,6 +378,39 @@ final class InstaChatContractTests: XCTestCase {
     for (message, expectedPreview) in samples {
       store.append(message, replacingLocalEcho: false)
       XCTAssertEqual(store.room(id: message.roomID)?.subtitle, expectedPreview)
+    }
+  }
+
+  func testHistoricalRoomPreviewUsesGenericMediaLabelsInsteadOfFileNames() throws {
+    let samples: [(String, String)] = [
+      (
+        #"{"id":"image","content":"private-photo-name.jpg","type":"image","created_at":"2026-08-13T12:00:00Z"}"#,
+        "Photo"
+      ),
+      (
+        #"{"id":"video","content":"local-BE07271C-9182-4B4F.mov","type":"file","created_at":"2026-08-13T12:00:00Z"}"#,
+        "Video"
+      ),
+      (
+        #"{"id":"voice","content":"opaque-upload-name","type":"file","created_at":"2026-08-13T12:00:00Z","attachments":[{"file_name":"recording.bin","content_type":"audio/mp4"}]}"#,
+        "Voice note"
+      ),
+      (
+        #"{"id":"file","content":"confidential-contract.pdf","type":"file","created_at":"2026-08-13T12:00:00Z"}"#,
+        "File"
+      ),
+      (
+        #"{"id":"location","content":"{\"latitude\":30,\"longitude\":31}","type":"location","created_at":"2026-08-13T12:00:00Z"}"#,
+        "Location"
+      )
+    ]
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601WithFractionalSeconds
+
+    for (json, expectedPreview) in samples {
+      let lastMessage = try decoder.decode(BackendRoomLastMessage.self, from: Data(json.utf8))
+      XCTAssertEqual(lastMessage.summary, expectedPreview)
+      XCTAssertFalse(lastMessage.summary.contains("local-"))
     }
   }
 

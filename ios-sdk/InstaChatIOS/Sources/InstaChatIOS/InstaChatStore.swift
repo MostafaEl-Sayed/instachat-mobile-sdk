@@ -488,20 +488,11 @@ extension InstaChatMessage {
     case .text:
       return content.isEmpty ? "Message" : content
     case .image:
-      return content.isEmpty ? "Photo" : content
+      return InstaChatAttachmentType.image.roomPreviewText
     case .location:
-      return location?.name ?? "Location"
+      return "Location"
     case .file:
-      switch attachment?.type {
-      case .video:
-        return content.isEmpty ? "Video" : content
-      case .audio:
-        return content.isEmpty ? "Voice note" : content
-      case .image:
-        return content.isEmpty ? "Photo" : content
-      case .file, .none:
-        return content.isEmpty ? "File" : content
-      }
+      return (attachment?.type ?? MimeTypeResolver.attachmentType(forFileName: content)).roomPreviewText
     }
   }
 }

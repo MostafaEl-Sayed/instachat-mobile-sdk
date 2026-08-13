@@ -26,6 +26,7 @@ import type { ChatRoom } from "../types/room";
 import type { ChatTheme } from "../types/theme";
 import type { ChatUser } from "../types/user";
 import { resolveTheme } from "../utils/theme";
+import { previewForMessage } from "../utils/messagePreview";
 import { ChatInput } from "./ChatInput";
 import { LocationPreview } from "./LocationPreview";
 import { MediaPreview } from "./MediaPreview";
@@ -856,25 +857,6 @@ function waitForInteractions(): Promise<void> {
   return new Promise((resolve) => {
     InteractionManager.runAfterInteractions(() => resolve());
   });
-}
-
-function previewForMessage(message: ChatMessage): string {
-  if (message.text) {
-    return message.text;
-  }
-  if (message.location) {
-    return "Shared a location";
-  }
-  if (message.media?.type === "audio") {
-    return "Voice note";
-  }
-  if (message.media?.type === "image") {
-    return "Image";
-  }
-  if (message.media?.type === "video") {
-    return "Video";
-  }
-  return "New message";
 }
 
 function initialsFor(title: string): string {

@@ -8,5 +8,5 @@
     "types": ["node", "react"],
     "noEmit": false
   },
-  "include": ["src/providers/InstaChatProvider.ts", "src/providers/*.ts", "src/types/**/*.ts", "tests/**/*.ts"]
+  "include": ["src/providers/InstaChatProvider.ts", "src/providers/*.ts", "src/types/**/*.ts", "src/utils/messagePreview.ts", "tests/**/*.ts"]
 }

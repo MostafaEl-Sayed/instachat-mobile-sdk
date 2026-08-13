@@ -107,6 +107,8 @@ Text, photo, video, voice-note, file, and location messages show an inline sendi
 
 Failed outgoing messages and their local media are stored by the SDK with iOS file protection. They remain retryable after navigating back to the room list, reopening the chat, or recreating the SDK view. A late backend echo replaces the local message and clears its retry state, preventing duplicate bubbles.
 
+Room-list subtitles use generic attachment labels instead of uploaded or local filenames: `Photo`, `Video`, `Voice note`, `File`, and `Location`. This applies immediately after sending, after realtime delivery, and after reloading historical rooms from the backend. If an older room response omits attachment metadata, the SDK infers its generic label from the filename extension without displaying that filename.
+
 Newly recorded voice notes are copied into the authenticated media cache before the local pending upload is released. They can therefore play immediately after the backend echo without waiting for CDN propagation. Remote media downloads retry transient `400`, `404`, rate-limit, server, and connection failures with bounded exponential backoff; playback failures show an explicit Retry control.
 
 Image and video previews are selected by the exact message and attachment identity. Scrolling or SwiftUI row reuse cannot redirect a tap to another media item, and image/video loaders reset whenever the selected URL changes. The complete voice-note row is tappable while playback remains owned by the chat screen, so it continues when its bubble scrolls off screen.

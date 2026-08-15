@@ -1,0 +1,2 @@
+-keepattributes Signature,*Annotation*
+-keep class pro.instakit.instachat.android.** { *; }

@@ -7,6 +7,10 @@ coverage/
 .test-build/
 .build/
 ios-sdk/InstaChatIOS/.build/
+android-sdk/.gradle/
+android-sdk/**/build/
+android-sdk/local.properties
+android-consumers/
 .DS_Store
 xcuserdata/
 npm-debug.log*

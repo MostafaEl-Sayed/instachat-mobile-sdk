@@ -64,7 +64,7 @@ sdk.presentChat(from: viewController, roomID: "room-id", title: "Support")
 
 Existing `InstaChatView(configuration:)` and `InstaChat.present(from:baseURL:token:user:roomID:)` integrations still work. They are legacy compatibility entry points now; new consumers should initialize with `InstaChat.initialize(...)` because those older entry points will be deprecated in a future release.
 
-The React Native package remains available for React Native host apps. Android should get a separate native Kotlin/Compose package next; embedding React Native inside a native Android app is possible but is not the recommended simple SDK experience.
+The React Native package remains available for React Native host apps. Native Android apps should use the Kotlin/Compose package described below; they do not need to embed a React Native runtime.
 
 ## Customer Quick Start
 
@@ -208,20 +208,31 @@ Then present it like any SwiftUI view:
 
 ## Android Kotlin Host
 
-Use a normal React Native host or a dedicated `ReactRootView` in your Android app:
+Add JitPack and the native Android artifact:
 
 ```kotlin
-val props = Bundle().apply {
-  putString("baseUrl", "https://instachat.instakit.pro")
-  putString("token", token)
-  putString("userId", "user-1")
-  putString("userName", "Mostafa")
-}
-
-val rootView = ReactRootView(context)
-rootView.startReactApplication(reactNativeHost.reactInstanceManager, "main", props)
-setContentView(rootView)
+maven("https://jitpack.io")
+implementation("com.github.MostafaEl-Sayed.instachat-mobile-sdk:instachat:v0.2.0")
 ```
+
+Initialize once, then open either the room list or a specific room:
+
+```kotlin
+import pro.instakit.instachat.android.InstaChat
+import pro.instakit.instachat.android.InstaChatUser
+
+val chat = InstaChat.initialize(
+  context = applicationContext,
+  baseUrl = "https://instachat.instakit.pro",
+  token = instaChatToken,
+  user = InstaChatUser(id = user.id, name = user.name, avatarUrl = user.avatarUrl),
+)
+
+chat.openChatList(activity)
+chat.openChat(activity, roomId = roomId, title = "Support")
+```
+
+The host app owns obtaining/refreshing the user token and, for provider-specific flows, calling its own start-chat endpoint to obtain `room_id`. The SDK owns the full chat presentation and close control after either open method is called. See [`android-sdk/README.md`](android-sdk/README.md) for Compose, Java, local-source, and sample instructions.
 
 ## Flutter Host
 
@@ -237,7 +248,7 @@ await chat.invokeMethod("openChat", {
 });
 ```
 
-The iOS side presents the same SwiftUI `ReactNativeChatView`; Android presents the same `ReactRootView`.
+The iOS side presents `InstaChatIOS`; Android invokes the native `InstaChatAndroid` entry points shown above.
 
 ## Backend Contract
 

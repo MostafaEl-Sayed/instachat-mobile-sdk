@@ -6,6 +6,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -79,7 +80,15 @@ internal class MediaPlaybackController(
         setDefaultRequestProperties(mapOf("Authorization" to "Bearer ${configuration.token}"))
       }
     }
-    val factory = DefaultDataSource.Factory(context, httpFactory)
+    val upstream = DefaultDataSource.Factory(context, httpFactory)
+    val factory = if (uri.scheme?.startsWith("http") == true) {
+      CacheDataSource.Factory()
+        .setCache(InstaChatMediaPlaybackCache.get(context))
+        .setUpstreamDataSourceFactory(upstream)
+        .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+    } else {
+      upstream
+    }
     val mediaItem = MediaItem.Builder()
       .setUri(uri)
       .setMimeType(attachment.contentType)
@@ -98,6 +107,12 @@ internal class MediaPlaybackController(
   fun release() {
     releasePlayer()
     _state.value = PlaybackState()
+  }
+
+  fun stop(messageId: String) {
+    if (_state.value.messageId == messageId) {
+      release()
+    }
   }
 
   private fun releasePlayer() {

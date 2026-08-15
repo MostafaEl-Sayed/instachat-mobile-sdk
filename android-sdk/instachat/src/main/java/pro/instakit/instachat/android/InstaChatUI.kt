@@ -271,11 +271,15 @@ private fun ChatDetail(
   onClose: (() -> Unit)?,
 ) {
   val messages = state.messagesByRoom[room.id].orEmpty()
-  val listState = rememberLazyListState()
+  val listState = remember(room.id) { androidx.compose.foundation.lazy.LazyListState() }
+  var positionedAtLatest by remember(room.id) { mutableStateOf(false) }
   LaunchedEffect(room.id) { store.openRoom(room) }
-  LaunchedEffect(messages.lastOrNull()?.id) {
+  LaunchedEffect(messages.lastOrNull()?.id, room.id) {
     val newest = messages.lastOrNull() ?: return@LaunchedEffect
-    if (newest.senderId == currentUserId || listState.firstVisibleItemIndex <= 1) {
+    if (!positionedAtLatest) {
+      listState.scrollToItem(0)
+      positionedAtLatest = true
+    } else if (newest.senderId == currentUserId || listState.firstVisibleItemIndex <= 1) {
       listState.animateScrollToItem(0)
     }
   }
@@ -565,6 +569,7 @@ private fun FullImageDialog(message: InstaChatMessage, configuration: InstaChatC
 private fun VideoDialog(message: InstaChatMessage, playback: MediaPlaybackController, onDismiss: () -> Unit) {
   val state by playback.state.collectAsState()
   LaunchedEffect(message.id) { playback.play(message) }
+  DisposableEffect(message.id) { onDispose { playback.stop(message.id) } }
   androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
     Surface(color = Color.Black, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth().fillMaxHeight(.72f)) {
       Box {

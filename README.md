@@ -212,7 +212,7 @@ Add JitPack and the native Android artifact:
 
 ```kotlin
 maven("https://jitpack.io")
-implementation("com.github.MostafaEl-Sayed.instachat-mobile-sdk:instachat:v0.2.0")
+implementation("com.github.MostafaEl-Sayed:instachat-mobile-sdk:v0.2.1")
 ```
 
 Initialize once, then open either the room list or a specific room:

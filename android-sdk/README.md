@@ -20,7 +20,7 @@ Add the SDK to the app module:
 
 ```kotlin
 dependencies {
-  implementation("com.github.MostafaEl-Sayed:instachat-mobile-sdk:v0.2.1")
+  implementation("com.github.MostafaEl-Sayed:instachat-mobile-sdk:0.2.1")
 }
 ```
 

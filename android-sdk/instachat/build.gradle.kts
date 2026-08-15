@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "pro.instakit"
-version = "0.2.1"
+version = "0.3.1"
 
 android {
   namespace = "pro.instakit.instachat.android"
@@ -57,6 +57,16 @@ dependencies {
 }
 
 publishing {
+  repositories {
+    maven {
+      name = "GitHubPackages"
+      url = uri("https://maven.pkg.github.com/MostafaEl-Sayed/instachat-android-sdk")
+      credentials {
+        username = System.getenv("GITHUB_ACTOR")
+        password = System.getenv("GITHUB_TOKEN")
+      }
+    }
+  }
   publications {
     register<MavenPublication>("release") {
       afterEvaluate { from(components["release"]) }

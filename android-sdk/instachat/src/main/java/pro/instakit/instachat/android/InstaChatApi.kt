@@ -63,8 +63,13 @@ internal class InstaChatApi(
     )
   }
 
-  suspend fun upload(roomId: String, uri: Uri, contentType: String?): InstaChatAttachment = withContext(Dispatchers.IO) {
-    val name = queryDisplayName(uri) ?: "attachment-${System.currentTimeMillis()}"
+  suspend fun upload(
+    roomId: String,
+    uri: Uri,
+    contentType: String?,
+    originalFileName: String? = null,
+  ): InstaChatAttachment = withContext(Dispatchers.IO) {
+    val name = originalFileName ?: queryDisplayName(uri) ?: "attachment-${System.currentTimeMillis()}"
     val mime = contentType ?: contentResolver.getType(uri) ?: mimeFromName(name)
     val body = object : RequestBody() {
       override fun contentType() = mime.toMediaTypeOrNull()

@@ -58,12 +58,12 @@ class InstaChatSDK internal constructor(
   }
 
   @Composable
-  fun ChatList(modifier: Modifier = Modifier, onClose: () -> Unit) {
+  fun ChatList(modifier: Modifier = Modifier, onClose: (() -> Unit)? = null) {
     InstaChatRoot(this, null, null, modifier, onClose)
   }
 
   @Composable
-  fun Chat(roomId: String, title: String? = null, modifier: Modifier = Modifier, onClose: () -> Unit) {
+  fun Chat(roomId: String, title: String? = null, modifier: Modifier = Modifier, onClose: (() -> Unit)? = null) {
     InstaChatRoot(this, roomId, title, modifier, onClose)
   }
 

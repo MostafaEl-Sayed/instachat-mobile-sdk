@@ -2,16 +2,19 @@
 
 Native Kotlin/Jetpack Compose chat SDK for Android 7.0 (API 24) and newer.
 
-## Install
+## Install From The Private Repository
 
-Add JitPack to `settings.gradle.kts`:
+Download `instachat-android-maven-0.3.1.zip` from the private repository's
+[`v0.3.1` release](https://github.com/MostafaEl-Sayed/instachat-android-sdk/releases/tag/v0.3.1),
+then extract its `sdk-repository` directory into the host project root. Add the
+local Maven repository to `settings.gradle.kts`:
 
 ```kotlin
 dependencyResolutionManagement {
   repositories {
     google()
     mavenCentral()
-    maven("https://jitpack.io")
+    maven { url = uri("$rootDir/sdk-repository") }
   }
 }
 ```
@@ -20,11 +23,15 @@ Add the SDK to the app module:
 
 ```kotlin
 dependencies {
-  implementation("com.github.MostafaEl-Sayed:instachat-mobile-sdk:0.2.1")
+  implementation("pro.instakit:instachat-android:0.3.1")
 }
 ```
 
 The library manifest contributes internet, microphone, and foreground-location permissions. The host app controls when runtime microphone and location permission prompts are shown.
+
+The Maven archive is preferred over copying the standalone AAR because it
+retains the SDK's dependency metadata. GitHub Packages can replace this local
+repository after package publishing is enabled for the private repository.
 
 ## Initialize Once
 
@@ -60,11 +67,11 @@ chat.openChatList(activity)
 chat.openChat(activity, roomId = startChatResponse.roomId, title = provider.name)
 ```
 
-For an embedded Compose surface:
+For an embedded Compose surface, the room list is shown immediately. A close action is optional because the host owns only presentation:
 
 ```kotlin
-chat.ChatList(onClose = { navigator.closeChat() })
-chat.Chat(roomId = roomId, onClose = { navigator.closeChat() })
+chat.ChatList(modifier = Modifier.fillMaxSize())
+chat.Chat(roomId = roomId, modifier = Modifier.fillMaxSize())
 ```
 
 Java hosts use the same entry points:
@@ -88,14 +95,22 @@ Flutter hosts call these methods from the Android side of a platform channel. No
 During SDK development, include the repository build:
 
 ```kotlin
-includeBuild("../instachat-mobile-sdk/android-sdk") {
+includeBuild("../instachat-android-sdk") {
   dependencySubstitution {
     substitute(module("pro.instakit:instachat-android")).using(project(":instachat"))
   }
 }
 ```
 
-Then depend on `pro.instakit:instachat-android:0.2.1`.
+Then depend on `pro.instakit:instachat-android:0.3.1`.
+
+The packaged Maven repository is the setup used by the Grandizar integrations.
+
+## SDK Ownership
+
+The SDK owns room loading, room navigation, realtime events, message reconciliation, media upload and caching, voice recording/playback, location sharing, retries, and error UI. Host applications provide only the base URL, authenticated token, user identity, and presentation container.
+
+Selected outgoing media is copied into SDK-managed storage before upload. Image, video, and voice playback prefer that local copy after the backend echo arrives. Remote CDN media is cached, retried for transient `400`, `404`, `408`, `425`, `429`, and `5xx` responses, and receives the bearer token only when the media URL has the same origin as the API base URL.
 
 ## Run The Sample
 

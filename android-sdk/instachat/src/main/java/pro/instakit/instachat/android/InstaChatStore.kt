@@ -33,6 +33,7 @@ internal class InstaChatStore(
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
   private val api = InstaChatApi(configuration, context.contentResolver)
   private val cache = InstaChatCache(context, configuration)
+  private val mediaCache = InstaChatMediaCache(context, configuration)
   private val appContext = context.applicationContext
   private val _state = MutableStateFlow(InstaChatState())
   val state: StateFlow<InstaChatState> = _state.asStateFlow()
@@ -130,29 +131,41 @@ internal class InstaChatStore(
   }
 
   fun sendMedia(roomId: String, uris: List<Uri>, contentType: String? = null) {
-    uris.take(5).forEach { uri ->
-      scope.launch {
-        val mime = contentType ?: appContext.contentResolver.getType(uri) ?: "application/octet-stream"
-        val type = attachmentType(mime)
-        val validation = validateMedia(uri, type)
+    scope.launch {
+      uris.take(5).forEach { uri ->
+        val source = runCatching { mediaCache.inspect(uri, contentType) }.getOrElse { error ->
+          update { it.copy(error = userFacingError(error)) }
+          return@forEach
+        }
+        val type = attachmentType(source.contentType)
+        val validation = validateMedia(source, type)
         if (validation != null) {
           update { it.copy(error = validation) }
-          return@launch
+          return@forEach
+        }
+        val message = optimistic(
+          roomId,
+          source.fileName,
+          if (type == InstaChatAttachmentType.IMAGE) InstaChatMessageType.IMAGE else InstaChatMessageType.FILE,
+        )
+        val preserved = runCatching { mediaCache.preserve(source, message.id) }.getOrElse { error ->
+          update { it.copy(error = userFacingError(error, type)) }
+          return@forEach
         }
         val local = InstaChatAttachment(
           id = "local-attachment-${UUID.randomUUID()}",
-          fileName = uri.lastPathSegment ?: "Attachment",
-          contentType = mime,
+          fileName = source.fileName,
+          contentType = preserved.contentType,
           type = type,
-          url = uri.toString(),
-          localUri = uri,
+          fileSize = preserved.fileSize,
+          url = preserved.uri.toString(),
+          localUri = preserved.uri,
         )
-        val message = optimistic(
-          roomId,
-          local.fileName,
-          if (type == InstaChatAttachmentType.IMAGE) InstaChatMessageType.IMAGE else InstaChatMessageType.FILE,
-        ).copy(attachment = local)
-        enqueue(message, PendingPayload.Media(uri, mime, null))
+        val readyMessage = message.copy(attachment = local)
+        val payload = PendingPayload.Media(preserved.uri, preserved.contentType, source.fileName, null)
+        pending[message.id] = payload
+        append(readyMessage)
+        performSend(message.id, payload)
       }
     }
   }
@@ -194,7 +207,7 @@ internal class InstaChatStore(
         is PendingPayload.Text -> api.sendText(message.roomId, payload.text)
         is PendingPayload.Location -> api.sendLocation(message.roomId, payload.location)
         is PendingPayload.Media -> {
-          val attachment = payload.uploaded ?: api.upload(message.roomId, payload.uri, payload.contentType)
+          val attachment = payload.uploaded ?: api.upload(message.roomId, payload.uri, payload.contentType, payload.fileName)
           pending[messageId] = payload.copy(uploaded = attachment)
           updateMessage(messageId) { local -> local.copy(attachment = attachment.copy(localUri = payload.uri)) }
           api.sendAttachment(message.roomId, attachment)
@@ -229,13 +242,13 @@ internal class InstaChatStore(
     val current = _state.value.messagesByRoom[incoming.roomId].orEmpty().toMutableList()
     val existing = current.indexOfFirst { it.id == incoming.id }
     if (existing >= 0) {
-      current[existing] = incoming
+      current[existing] = incoming.preservingLocalMedia(current[existing], mediaCache)
     } else {
       val localIndex = current.indexOfLast { matchesLocalEcho(it, incoming, configuration.user.id) }
       if (localIndex >= 0) {
         val local = current[localIndex]
         pending.remove(local.id)
-        current[localIndex] = incoming.copy(attachment = incoming.attachment?.copy(localUri = local.attachment?.localUri))
+        current[localIndex] = incoming.preservingLocalMedia(local, mediaCache)
       } else {
         current += incoming
       }
@@ -248,13 +261,13 @@ internal class InstaChatStore(
     val merged = _state.value.messagesByRoom[roomId].orEmpty().toMutableList()
     fetched.forEach { incoming ->
       val index = merged.indexOfFirst { it.id == incoming.id }
-      if (index >= 0) merged[index] = incoming
+      if (index >= 0) merged[index] = incoming.preservingLocalMedia(merged[index], mediaCache)
       else {
         val localIndex = merged.indexOfLast { matchesLocalEcho(it, incoming, configuration.user.id) }
         if (localIndex >= 0) {
           val local = merged[localIndex]
           pending.remove(local.id)
-          merged[localIndex] = incoming.copy(attachment = incoming.attachment?.copy(localUri = local.attachment?.localUri))
+          merged[localIndex] = incoming.preservingLocalMedia(local, mediaCache)
         } else merged += incoming
       }
     }
@@ -317,19 +330,18 @@ internal class InstaChatStore(
     deliveryState = InstaChatDeliveryState.SENDING,
   )
 
-  private fun validateMedia(uri: Uri, type: InstaChatAttachmentType): String? {
-    val size = appContext.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: 0
-    if (size > 100L * 1024 * 1024) return "This file is larger than the 100 MB upload limit."
+  private suspend fun validateMedia(media: LocalMediaInfo, type: InstaChatAttachmentType): String? = withContext(Dispatchers.IO) {
+    if (media.fileSize > 100L * 1024 * 1024) return@withContext "This file is larger than the 100 MB upload limit."
     if (type == InstaChatAttachmentType.VIDEO) {
       val durationMs = runCatching {
         MediaMetadataRetriever().use { retriever ->
-          retriever.setDataSource(appContext, uri)
+          retriever.setDataSource(appContext, media.uri)
           retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0
         }
       }.getOrDefault(0)
-      if (durationMs > 60_000) return "Videos must be one minute or shorter."
+      if (durationMs > 60_000) return@withContext "Videos must be one minute or shorter."
     }
-    return null
+    null
   }
 
   private fun attachmentType(mime: String) = when {
@@ -360,6 +372,7 @@ internal class InstaChatStore(
           message.attachment?.localUri != null -> PendingPayload.Media(
             message.attachment.localUri,
             message.attachment.contentType,
+            message.attachment.fileName,
             message.attachment.takeIf { !it.id.startsWith("local-") },
           )
           message.location != null -> PendingPayload.Location(message.location)
@@ -374,14 +387,33 @@ internal fun matchesLocalEcho(local: InstaChatMessage, incoming: InstaChatMessag
   if (!local.id.startsWith("local-") || incoming.senderId != currentUserId || local.senderId != currentUserId) return false
   if (Duration.between(local.createdAt, incoming.createdAt).abs() > Duration.ofMinutes(5)) return false
   return when {
-    local.attachment != null && incoming.attachment != null -> local.attachment.type == incoming.attachment.type
+    local.attachment != null && incoming.attachment != null -> {
+      local.attachment.type == incoming.attachment.type &&
+        (local.attachment.id == incoming.attachment.id ||
+          local.attachment.fileName.normalizedMediaName() == incoming.attachment.fileName.normalizedMediaName())
+    }
     local.type == InstaChatMessageType.LOCATION -> incoming.type == InstaChatMessageType.LOCATION
     else -> local.type == incoming.type && local.content == incoming.content
   }
 }
 
+private fun InstaChatMessage.preservingLocalMedia(
+  existing: InstaChatMessage,
+  mediaCache: InstaChatMediaCache,
+): InstaChatMessage {
+  val localUri = mediaCache.usableLocalUri(existing.attachment?.localUri) ?: return this
+  return if (attachment != null) copy(attachment = attachment.copy(localUri = localUri)) else this
+}
+
+private fun String.normalizedMediaName(): String = substringAfterLast('/').trim().lowercase()
+
 private sealed interface PendingPayload {
   data class Text(val text: String) : PendingPayload
   data class Location(val location: InstaChatLocation) : PendingPayload
-  data class Media(val uri: Uri, val contentType: String, val uploaded: InstaChatAttachment?) : PendingPayload
+  data class Media(
+    val uri: Uri,
+    val contentType: String,
+    val fileName: String,
+    val uploaded: InstaChatAttachment?,
+  ) : PendingPayload
 }

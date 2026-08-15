@@ -106,7 +106,9 @@ import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
+import kotlinx.coroutines.delay
 import okhttp3.Headers
+import java.io.File
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.math.max
@@ -131,7 +133,7 @@ internal fun InstaChatRoot(
   initialRoomId: String?,
   initialRoomTitle: String?,
   modifier: Modifier = Modifier,
-  onClose: () -> Unit,
+  onClose: (() -> Unit)? = null,
 ) {
   val state by sdk.store.state.collectAsState()
   val context = LocalContext.current
@@ -173,7 +175,7 @@ private fun ChatRoomList(
   title: String,
   onRefresh: () -> Unit,
   onRoom: (InstaChatRoom) -> Unit,
-  onClose: () -> Unit,
+  onClose: (() -> Unit)?,
 ) {
   val lifecycleOwner = LocalLifecycleOwner.current
   LaunchedEffect(Unit) { onRefresh() }
@@ -204,7 +206,7 @@ private fun ChatRoomList(
 }
 
 @Composable
-private fun Header(title: String, onBack: (() -> Unit)? = null, onClose: () -> Unit) {
+private fun Header(title: String, onBack: (() -> Unit)? = null, onClose: (() -> Unit)?) {
   Box(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp)) {
     if (onBack != null) {
       IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart).size(48.dp)) {
@@ -219,8 +221,10 @@ private fun Header(title: String, onBack: (() -> Unit)? = null, onClose: () -> U
       overflow = TextOverflow.Ellipsis,
       modifier = Modifier.align(Alignment.Center).padding(horizontal = 56.dp),
     )
-    IconButton(onClick = onClose, modifier = Modifier.align(Alignment.CenterEnd).size(44.dp)) {
-      Icon(Icons.Default.Close, "Close chat", modifier = Modifier.size(20.dp))
+    if (onClose != null) {
+      IconButton(onClick = onClose, modifier = Modifier.align(Alignment.CenterEnd).size(44.dp)) {
+        Icon(Icons.Default.Close, "Close chat", modifier = Modifier.size(20.dp))
+      }
     }
   }
 }
@@ -264,11 +268,17 @@ private fun ChatDetail(
   store: InstaChatStore,
   playback: MediaPlaybackController,
   onBack: (() -> Unit)?,
-  onClose: () -> Unit,
+  onClose: (() -> Unit)?,
 ) {
   val messages = state.messagesByRoom[room.id].orEmpty()
   val listState = rememberLazyListState()
   LaunchedEffect(room.id) { store.openRoom(room) }
+  LaunchedEffect(messages.lastOrNull()?.id) {
+    val newest = messages.lastOrNull() ?: return@LaunchedEffect
+    if (newest.senderId == currentUserId || listState.firstVisibleItemIndex <= 1) {
+      listState.animateScrollToItem(0)
+    }
+  }
   DisposableEffect(room.id) { onDispose { store.closeRoom() } }
 
   Scaffold(
@@ -370,17 +380,30 @@ private fun LinkedMessageText(text: String, color: Color) {
 @Composable
 private fun ImageBubble(message: InstaChatMessage, configuration: InstaChatConfiguration, onOpen: () -> Unit) {
   val attachment = message.attachment ?: return
-  var retry by remember(message.id) { mutableIntStateOf(0) }
+  var attempt by remember(message.id) { mutableIntStateOf(0) }
   var failed by remember(message.id) { mutableStateOf(false) }
+  var preferRemote by remember(message.id) { mutableStateOf(false) }
+  LaunchedEffect(failed, attempt, preferRemote) {
+    if (!failed) return@LaunchedEffect
+    if (!preferRemote && attachment.hasUsableLocalFile()) {
+      preferRemote = true
+      failed = false
+      return@LaunchedEffect
+    }
+    val delayMs = MediaRetryDelays.milliseconds.getOrNull(attempt) ?: return@LaunchedEffect
+    delay(delayMs)
+    attempt++
+    failed = false
+  }
   Box(Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFFE5E5EA))) {
     AsyncImage(
-      model = imageRequest(attachment, configuration, retry),
+      model = imageRequest(attachment, configuration, attempt, preferRemote),
       contentDescription = "Open photo",
       onError = { failed = true },
       onSuccess = { failed = false },
       modifier = Modifier.fillMaxSize().clickable(enabled = !failed, onClick = onOpen),
     )
-    if (failed) TextButton(onClick = { retry++; failed = false }, modifier = Modifier.align(Alignment.Center)) {
+    if (failed && attempt >= MediaRetryDelays.milliseconds.size) TextButton(onClick = { attempt = 0; failed = false }, modifier = Modifier.align(Alignment.Center)) {
       Icon(Icons.Default.BrokenImage, null); Spacer(Modifier.width(4.dp)); Text("Retry photo")
     }
   }
@@ -437,7 +460,7 @@ private fun ChatComposer(roomId: String, store: InstaChatStore, modifier: Modifi
   val recorder = remember { VoiceNoteRecorder(context) }
   val recording by recorder.state.collectAsState()
   val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris -> store.sendMedia(roomId, uris.take(5)) }
-  val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let { store.sendMedia(roomId, listOf(it), "video/mp4") } }
+  val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let { store.sendMedia(roomId, listOf(it)) } }
   val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { if (it) recorder.start() }
   val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
     if (granted.values.any { it }) currentLocation(context) { location ->
@@ -503,9 +526,36 @@ private fun Waveform(amplitudes: List<Float>, color: Color, modifier: Modifier =
 
 @Composable
 private fun FullImageDialog(message: InstaChatMessage, configuration: InstaChatConfiguration, onDismiss: () -> Unit) {
+  val attachment = message.attachment ?: return
+  var attempt by remember(message.id) { mutableIntStateOf(0) }
+  var failed by remember(message.id) { mutableStateOf(false) }
+  var preferRemote by remember(message.id) { mutableStateOf(false) }
+  LaunchedEffect(failed, attempt, preferRemote) {
+    if (!failed) return@LaunchedEffect
+    if (!preferRemote && attachment.hasUsableLocalFile()) {
+      preferRemote = true
+      failed = false
+      return@LaunchedEffect
+    }
+    val delayMs = MediaRetryDelays.milliseconds.getOrNull(attempt) ?: return@LaunchedEffect
+    delay(delayMs)
+    attempt++
+    failed = false
+  }
   androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-      AsyncImage(imageRequest(message.attachment ?: return@Dialog, configuration, 0), "Full-screen photo", Modifier.fillMaxSize())
+      AsyncImage(
+        model = imageRequest(attachment, configuration, attempt, preferRemote),
+        contentDescription = "Full-screen photo",
+        onError = { failed = true },
+        onSuccess = { failed = false },
+        modifier = Modifier.fillMaxSize(),
+      )
+      if (failed && attempt >= MediaRetryDelays.milliseconds.size) {
+        Button(onClick = { attempt = 0; failed = false }, Modifier.align(Alignment.Center)) {
+          Icon(Icons.Default.Refresh, null); Text(" Retry photo")
+        }
+      }
       IconButton(onClick = onDismiss, Modifier.align(Alignment.TopEnd).padding(12.dp).background(Color.Black.copy(alpha = .5f), CircleShape)) { Icon(Icons.Default.Close, "Close photo", tint = Color.White) }
     }
   }
@@ -558,21 +608,31 @@ private fun EmptyState(title: String, subtitle: String, onRetry: () -> Unit) {
   }
 }
 
-private fun imageRequest(attachment: InstaChatAttachment, configuration: InstaChatConfiguration, retry: Int): ImageRequest {
-  val source = attachment.localUri ?: Uri.parse(attachment.url)
+private fun imageRequest(
+  attachment: InstaChatAttachment,
+  configuration: InstaChatConfiguration,
+  attempt: Int,
+  preferRemote: Boolean,
+): ImageRequest {
+  val local = attachment.localUri?.takeIf { it.scheme != "file" || it.path?.let(::File)?.isFile == true }
+  val source = if (preferRemote) Uri.parse(attachment.url) else local ?: Uri.parse(attachment.url)
   return ImageRequest.Builder(InstaChatApplicationContext.context)
     .data(source)
-    .memoryCacheKey("${attachment.url}-$retry")
+    .memoryCacheKey(attachment.url)
     .diskCacheKey(attachment.url)
     .memoryCachePolicy(CachePolicy.ENABLED)
     .diskCachePolicy(CachePolicy.ENABLED)
     .apply {
-      if (attachment.localUri == null && shouldAuthorizeMedia(attachment.url, configuration.baseUrl)) {
+      if (source.scheme?.startsWith("http") == true && shouldAuthorizeMedia(source.toString(), configuration.baseUrl)) {
         headers(Headers.Builder().add("Authorization", "Bearer ${configuration.token}").build())
       }
     }
     .build()
 }
+
+private fun InstaChatAttachment.hasUsableLocalFile(): Boolean = localUri?.let { uri ->
+  uri.scheme != "file" || uri.path?.let(::File)?.isFile == true
+} == true
 
 private fun currentLocation(context: Context, callback: (InstaChatLocation?) -> Unit) {
   val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||

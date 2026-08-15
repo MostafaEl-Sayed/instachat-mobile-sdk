@@ -24,6 +24,7 @@ internal class MediaPlaybackController(
   private val context: Context,
   private val configuration: InstaChatConfiguration,
 ) {
+  private val mediaCache = InstaChatMediaCache(context, configuration)
   private var player: ExoPlayer? = null
   private val _state = MutableStateFlow(PlaybackState())
   val state: StateFlow<PlaybackState> = _state.asStateFlow()
@@ -37,9 +38,15 @@ internal class MediaPlaybackController(
   }
 
   fun play(message: InstaChatMessage) {
+    play(message, preferRemote = false)
+  }
+
+  private fun play(message: InstaChatMessage, preferRemote: Boolean) {
     val attachment = message.attachment ?: return
     releasePlayer()
-    val uri = attachment.localUri ?: Uri.parse(attachment.url)
+    val localUri = mediaCache.usableLocalUri(attachment.localUri)
+    val uri = if (!preferRemote && localUri != null) localUri else Uri.parse(attachment.url)
+    val canFallBackToRemote = !preferRemote && localUri != null && attachment.url != localUri.toString()
     val exoPlayer = ExoPlayer.Builder(context).build()
     player = exoPlayer
     exoPlayer.addListener(object : Player.Listener {
@@ -55,6 +62,10 @@ internal class MediaPlaybackController(
       }
 
       override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+        if (canFallBackToRemote && player === exoPlayer) {
+          play(message, preferRemote = true)
+          return
+        }
         _state.value = _state.value.copy(
           isLoading = false,
           isPlaying = false,
@@ -63,12 +74,19 @@ internal class MediaPlaybackController(
       }
     })
     val httpFactory = DefaultHttpDataSource.Factory().apply {
+      setAllowCrossProtocolRedirects(true)
       if (shouldAuthorizeMedia(uri.toString(), configuration.baseUrl)) {
         setDefaultRequestProperties(mapOf("Authorization" to "Bearer ${configuration.token}"))
       }
     }
     val factory = DefaultDataSource.Factory(context, httpFactory)
-    val source = ProgressiveMediaSource.Factory(factory).createMediaSource(MediaItem.fromUri(uri))
+    val mediaItem = MediaItem.Builder()
+      .setUri(uri)
+      .setMimeType(attachment.contentType)
+      .build()
+    val source = ProgressiveMediaSource.Factory(factory)
+      .setLoadErrorHandlingPolicy(InstaChatLoadErrorHandlingPolicy())
+      .createMediaSource(mediaItem)
     _state.value = PlaybackState(message.id, isLoading = true)
     exoPlayer.setMediaSource(source)
     exoPlayer.prepare()

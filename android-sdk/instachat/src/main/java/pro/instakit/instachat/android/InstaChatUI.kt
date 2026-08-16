@@ -313,7 +313,25 @@ private fun ChatDetail(
           MessageBubble(message, message.senderId == currentUserId, configuration, playback, onRetry = { store.retry(message.id) })
         }
         item(key = "older") {
-          LaunchedEffect(messages.firstOrNull()?.id) { if (messages.isNotEmpty()) store.loadOlder(room.id) }
+          when {
+            room.id in state.loadingOlderRoomIds -> Box(
+              Modifier.fillMaxWidth().padding(12.dp),
+              contentAlignment = Alignment.Center,
+            ) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) }
+            room.id in state.historyErrorRoomIds -> Box(
+              Modifier.fillMaxWidth().padding(8.dp),
+              contentAlignment = Alignment.Center,
+            ) {
+              TextButton(onClick = { store.loadOlder(room.id) }) {
+                Icon(Icons.Default.Refresh, null)
+                Spacer(Modifier.width(4.dp))
+                Text("Retry older messages")
+              }
+            }
+            else -> LaunchedEffect(messages.firstOrNull()?.id) {
+              if (messages.isNotEmpty()) store.loadOlder(room.id)
+            }
+          }
         }
       }
     }
@@ -386,6 +404,8 @@ private fun ImageBubble(message: InstaChatMessage, configuration: InstaChatConfi
   val attachment = message.attachment ?: return
   var attempt by remember(message.id) { mutableIntStateOf(0) }
   var failed by remember(message.id) { mutableStateOf(false) }
+  var loading by remember(message.id) { mutableStateOf(true) }
+  var unusable by remember(message.id) { mutableStateOf(isUnusableImagePayload(attachment.fileSize)) }
   var preferRemote by remember(message.id) { mutableStateOf(false) }
   LaunchedEffect(failed, attempt, preferRemote) {
     if (!failed) return@LaunchedEffect
@@ -403,12 +423,43 @@ private fun ImageBubble(message: InstaChatMessage, configuration: InstaChatConfi
     AsyncImage(
       model = imageRequest(attachment, configuration, attempt, preferRemote),
       contentDescription = "Open photo",
-      onError = { failed = true },
-      onSuccess = { failed = false },
-      modifier = Modifier.fillMaxSize().clickable(enabled = !failed, onClick = onOpen),
+      onLoading = { loading = true },
+      onError = { loading = false; failed = true },
+      onSuccess = { result ->
+        loading = false
+        failed = false
+        unusable = isUnusableImagePayload(
+          attachment.fileSize,
+          result.result.drawable.intrinsicWidth,
+          result.result.drawable.intrinsicHeight,
+        )
+      },
+      modifier = Modifier.fillMaxSize().clickable(enabled = !failed && !unusable, onClick = onOpen),
     )
-    if (failed && attempt >= MediaRetryDelays.milliseconds.size) TextButton(onClick = { attempt = 0; failed = false }, modifier = Modifier.align(Alignment.Center)) {
-      Icon(Icons.Default.BrokenImage, null); Spacer(Modifier.width(4.dp)); Text("Retry photo")
+    if (loading && !failed && !unusable) CircularProgressIndicator(Modifier.align(Alignment.Center).size(28.dp), strokeWidth = 2.dp)
+    if (unusable) MediaUnavailable(
+      label = "Photo data is unavailable",
+      onRetry = { attempt++; unusable = false; loading = true },
+      modifier = Modifier.align(Alignment.Center),
+    )
+    if (failed && attempt >= MediaRetryDelays.milliseconds.size) MediaUnavailable(
+      label = "Photo could not be loaded",
+      onRetry = { attempt++; failed = false; loading = true },
+      modifier = Modifier.align(Alignment.Center),
+    )
+  }
+}
+
+@Composable
+private fun MediaUnavailable(label: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+  Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+    Icon(Icons.Default.BrokenImage, null, tint = Color(0xFF6E6E73))
+    Spacer(Modifier.height(4.dp))
+    Text(label, color = Color(0xFF6E6E73), fontSize = 13.sp)
+    TextButton(onClick = onRetry) {
+      Icon(Icons.Default.Refresh, null, Modifier.size(16.dp))
+      Spacer(Modifier.width(4.dp))
+      Text("Retry")
     }
   }
 }
@@ -533,6 +584,8 @@ private fun FullImageDialog(message: InstaChatMessage, configuration: InstaChatC
   val attachment = message.attachment ?: return
   var attempt by remember(message.id) { mutableIntStateOf(0) }
   var failed by remember(message.id) { mutableStateOf(false) }
+  var loading by remember(message.id) { mutableStateOf(true) }
+  var unusable by remember(message.id) { mutableStateOf(isUnusableImagePayload(attachment.fileSize)) }
   var preferRemote by remember(message.id) { mutableStateOf(false) }
   LaunchedEffect(failed, attempt, preferRemote) {
     if (!failed) return@LaunchedEffect
@@ -551,12 +604,27 @@ private fun FullImageDialog(message: InstaChatMessage, configuration: InstaChatC
       AsyncImage(
         model = imageRequest(attachment, configuration, attempt, preferRemote),
         contentDescription = "Full-screen photo",
-        onError = { failed = true },
-        onSuccess = { failed = false },
+        onLoading = { loading = true },
+        onError = { loading = false; failed = true },
+        onSuccess = { result ->
+          loading = false
+          failed = false
+          unusable = isUnusableImagePayload(
+            attachment.fileSize,
+            result.result.drawable.intrinsicWidth,
+            result.result.drawable.intrinsicHeight,
+          )
+        },
         modifier = Modifier.fillMaxSize(),
       )
+      if (loading && !failed && !unusable) CircularProgressIndicator(Modifier.align(Alignment.Center), color = Color.White)
+      if (unusable) MediaUnavailable(
+        label = "Photo data is unavailable",
+        onRetry = { attempt++; unusable = false; loading = true },
+        modifier = Modifier.align(Alignment.Center),
+      )
       if (failed && attempt >= MediaRetryDelays.milliseconds.size) {
-        Button(onClick = { attempt = 0; failed = false }, Modifier.align(Alignment.Center)) {
+        Button(onClick = { attempt++; failed = false; loading = true }, Modifier.align(Alignment.Center)) {
           Icon(Icons.Default.Refresh, null); Text(" Retry photo")
         }
       }
@@ -623,8 +691,8 @@ private fun imageRequest(
   val source = if (preferRemote) Uri.parse(attachment.url) else local ?: Uri.parse(attachment.url)
   return ImageRequest.Builder(InstaChatApplicationContext.context)
     .data(source)
-    .memoryCacheKey(attachment.url)
-    .diskCacheKey(attachment.url)
+    .memoryCacheKey("${attachment.url}#$attempt")
+    .diskCacheKey("${attachment.url}#$attempt")
     .memoryCachePolicy(CachePolicy.ENABLED)
     .diskCachePolicy(CachePolicy.ENABLED)
     .apply {
@@ -633,6 +701,11 @@ private fun imageRequest(
       }
     }
     .build()
+}
+
+internal fun isUnusableImagePayload(fileSize: Long?, width: Int? = null, height: Int? = null): Boolean {
+  if (fileSize != null && fileSize in 1..128) return true
+  return width != null && height != null && width <= 1 && height <= 1
 }
 
 private fun InstaChatAttachment.hasUsableLocalFile(): Boolean = localUri?.let { uri ->

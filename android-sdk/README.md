@@ -4,8 +4,8 @@ Native Kotlin/Jetpack Compose chat SDK for Android 7.0 (API 24) and newer.
 
 ## Install From The Private Repository
 
-Download `instachat-android-maven-0.3.2.zip` from the private repository's
-[`v0.3.2` release](https://github.com/MostafaEl-Sayed/instachat-android-sdk/releases/tag/v0.3.2),
+Download `instachat-android-maven-0.3.3.zip` from the private repository's
+[`v0.3.3` release](https://github.com/MostafaEl-Sayed/instachat-android-sdk/releases/tag/v0.3.3),
 then extract its `sdk-repository` directory into the host project root. Add the
 local Maven repository to `settings.gradle.kts`:
 
@@ -23,7 +23,7 @@ Add the SDK to the app module:
 
 ```kotlin
 dependencies {
-  implementation("pro.instakit:instachat-android:0.3.2")
+  implementation("pro.instakit:instachat-android:0.3.3")
 }
 ```
 
@@ -102,7 +102,7 @@ includeBuild("../instachat-android-sdk") {
 }
 ```
 
-Then depend on `pro.instakit:instachat-android:0.3.2`.
+Then depend on `pro.instakit:instachat-android:0.3.3`.
 
 The packaged Maven repository is the setup used by the Grandizar integrations.
 

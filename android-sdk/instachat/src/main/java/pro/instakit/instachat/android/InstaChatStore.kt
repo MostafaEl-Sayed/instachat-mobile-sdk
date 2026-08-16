@@ -22,6 +22,8 @@ internal data class InstaChatState(
   val messagesByRoom: Map<String, List<InstaChatMessage>> = emptyMap(),
   val loadingRooms: Boolean = false,
   val loadingRoomIds: Set<String> = emptySet(),
+  val loadingOlderRoomIds: Set<String> = emptySet(),
+  val historyErrorRoomIds: Set<String> = emptySet(),
   val typingRoomIds: Set<String> = emptySet(),
   val error: String? = null,
 )
@@ -89,7 +91,7 @@ internal class InstaChatStore(
       update { it.copy(loadingRoomIds = it.loadingRoomIds + roomId, error = null) }
       runCatching { api.getMessages(roomId) }
         .onSuccess { page ->
-          cursors[roomId] = page.nextCursor
+          cursors[roomId] = page.nextCursor.normalizedCursor()
           mergeMessages(roomId, page.messages)
         }
         .onFailure { error -> update { it.copy(error = userFacingError(error)) } }
@@ -100,21 +102,35 @@ internal class InstaChatStore(
   private fun refreshMessages(roomId: String) {
     scope.launch {
       runCatching { api.getMessages(roomId) }.onSuccess { page ->
-        cursors[roomId] = page.nextCursor
+        cursors[roomId] = page.nextCursor.normalizedCursor()
         mergeMessages(roomId, page.messages)
       }
     }
   }
 
   fun loadOlder(roomId: String) {
-    val cursor = cursors[roomId] ?: return
+    val cursor = cursors[roomId].normalizedCursor() ?: return
     if (!loadingOlder.add(roomId)) return
     scope.launch {
-      runCatching { api.getMessages(roomId, cursor) }.onSuccess { page ->
-        cursors[roomId] = page.nextCursor
-        mergeMessages(roomId, page.messages)
+      update {
+        it.copy(
+          loadingOlderRoomIds = it.loadingOlderRoomIds + roomId,
+          historyErrorRoomIds = it.historyErrorRoomIds - roomId,
+        )
       }
-      loadingOlder.remove(roomId)
+      try {
+        runCatching { api.getMessages(roomId, cursor) }
+          .onSuccess { page ->
+            cursors[roomId] = page.nextCursor.normalizedCursor()
+            mergeMessages(roomId, page.messages)
+          }
+          .onFailure {
+            update { state -> state.copy(historyErrorRoomIds = state.historyErrorRoomIds + roomId) }
+          }
+      } finally {
+        loadingOlder.remove(roomId)
+        update { it.copy(loadingOlderRoomIds = it.loadingOlderRoomIds - roomId) }
+      }
     }
   }
 
@@ -382,6 +398,8 @@ internal class InstaChatStore(
       }
   }
 }
+
+internal fun String?.normalizedCursor(): String? = this?.trim()?.takeIf(String::isNotEmpty)
 
 internal fun matchesLocalEcho(local: InstaChatMessage, incoming: InstaChatMessage, currentUserId: String): Boolean {
   if (!local.id.startsWith("local-") || incoming.senderId != currentUserId || local.senderId != currentUserId) return false

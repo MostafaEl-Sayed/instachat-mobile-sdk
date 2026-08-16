@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "pro.instakit"
-version = "0.3.2"
+version = "0.3.3"
 
 android {
   namespace = "pro.instakit.instachat.android"

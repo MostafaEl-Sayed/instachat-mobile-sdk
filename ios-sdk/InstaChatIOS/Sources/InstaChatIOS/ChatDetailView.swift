@@ -164,11 +164,8 @@ struct ChatDetailView: View {
                   await store.retryMessage(messageID: message.id)
                 }
               },
-              onPreviewAttachment: { attachment in
-                mediaPreviewSelection = MediaPreviewSelection(
-                  messageID: message.id,
-                  attachment: attachment
-                )
+              onPreviewSelection: { selection in
+                mediaPreviewSelection = selection
               }
             )
               .id(message.id)
@@ -760,7 +757,7 @@ private struct MessageBubbleView: View {
   @ObservedObject var voicePlaybackController: VoiceNotePlaybackController
   var deliveryState: OutgoingMessageDeliveryState?
   var onRetry: () -> Void
-  var onPreviewAttachment: (InstaChatAttachment) -> Void
+  var onPreviewSelection: (MediaPreviewSelection) -> Void
 
   var body: some View {
     HStack(alignment: .bottom) {
@@ -836,7 +833,7 @@ private struct MessageBubbleView: View {
           isCurrentUser: isCurrentUser,
           mediaAuthorization: mediaAuthorization,
           voicePlaybackController: voicePlaybackController,
-          onPreview: onPreviewAttachment
+          onPreview: onPreviewSelection
         )
       } else {
         LinkedMessageText(messageID: message.id, content: message.content, isCurrentUser: isCurrentUser)
@@ -944,7 +941,7 @@ private struct AttachmentBubble: View {
   var isCurrentUser: Bool
   var mediaAuthorization: MediaRequestAuthorization
   @ObservedObject var voicePlaybackController: VoiceNotePlaybackController
-  var onPreview: (InstaChatAttachment) -> Void
+  var onPreview: (MediaPreviewSelection) -> Void
 
   var body: some View {
     Group {
@@ -953,7 +950,7 @@ private struct AttachmentBubble: View {
           .bubbleStyle(isCurrentUser: isCurrentUser)
       } else if attachment.type == .video {
         Button {
-          onPreview(attachment)
+          previewSelection.open(using: onPreview)
         } label: {
           fileBubble(systemImage: "play.rectangle.fill", title: attachment.fileName, subtitle: "Tap to preview")
             .bubbleStyle(isCurrentUser: isCurrentUser)
@@ -983,7 +980,8 @@ private struct AttachmentBubble: View {
       fileName: attachment.fileName,
       authorization: mediaAuthorization,
       contentMode: .fill,
-      onOpen: { onPreview(attachment) },
+      previewSelection: previewSelection,
+      onOpen: onPreview,
       openAccessibilityLabel: "Open image \(attachment.fileName)"
     )
     .frame(width: 220, height: 150)
@@ -993,6 +991,10 @@ private struct AttachmentBubble: View {
 
   private var mediaIdentity: MediaAttachmentIdentity {
     MediaAttachmentIdentity(messageID: messageID, attachment: attachment)
+  }
+
+  private var previewSelection: MediaPreviewSelection {
+    MediaPreviewSelection(messageID: messageID, attachment: attachment)
   }
 
   private func fileBubble(systemImage: String, title: String, subtitle: String) -> some View {
@@ -1362,7 +1364,8 @@ private struct AuthenticatedRemoteImage: View {
   var fileName: String?
   var authorization: MediaRequestAuthorization
   var contentMode: ContentMode
-  var onOpen: (() -> Void)?
+  var previewSelection: MediaPreviewSelection?
+  var onOpen: ((MediaPreviewSelection) -> Void)?
   var openAccessibilityLabel: String?
 
   @State private var image: PlatformImage?
@@ -1375,7 +1378,8 @@ private struct AuthenticatedRemoteImage: View {
     fileName: String? = nil,
     authorization: MediaRequestAuthorization,
     contentMode: ContentMode,
-    onOpen: (() -> Void)? = nil,
+    previewSelection: MediaPreviewSelection? = nil,
+    onOpen: ((MediaPreviewSelection) -> Void)? = nil,
     openAccessibilityLabel: String? = nil
   ) {
     self.identity = identity
@@ -1383,6 +1387,7 @@ private struct AuthenticatedRemoteImage: View {
     self.fileName = fileName
     self.authorization = authorization
     self.contentMode = contentMode
+    self.previewSelection = previewSelection
     self.onOpen = onOpen
     self.openAccessibilityLabel = openAccessibilityLabel
     _image = State(initialValue: PlatformImageMemoryCache.shared.image(for: url, authorization: authorization))
@@ -1483,14 +1488,17 @@ private struct AuthenticatedRemoteImage: View {
 
   @ViewBuilder
   private func loadedImage(_ image: PlatformImage) -> some View {
-    if let onOpen {
-      Button(action: onOpen) {
+    if let previewSelection, let onOpen {
+      Button {
+        previewSelection.open(using: onOpen)
+      } label: {
         platformImage(image)
           .resizable()
           .aspectRatio(contentMode: contentMode)
       }
       .buttonStyle(.plain)
       .contentShape(Rectangle())
+      .id(previewSelection.id)
       .accessibilityLabel(openAccessibilityLabel ?? "Open image")
     } else {
       platformImage(image)
@@ -2167,6 +2175,10 @@ struct MediaPreviewSelection: Identifiable, Hashable {
 
   var identity: MediaAttachmentIdentity {
     MediaAttachmentIdentity(messageID: messageID, attachment: attachment)
+  }
+
+  func open(using handler: (MediaPreviewSelection) -> Void) {
+    handler(self)
   }
 }
 

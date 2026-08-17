@@ -493,6 +493,106 @@ final class InstaChatContractTests: XCTestCase {
     }
   }
 
+  func testEachTappedImageRoutesItsExactMessageAndAttachment() {
+    let selections = (1...3).map { index in
+      MediaPreviewSelection(
+        messageID: "message-\(index)",
+        attachment: InstaChatAttachment(
+          id: "attachment-\(index)",
+          fileName: "photo.jpg",
+          contentType: "image/jpeg",
+          type: .image,
+          url: URL(string: "https://cdn.example.com/images/photo-\(index).jpg")!
+        )
+      )
+    }
+    var openedSelections: [MediaPreviewSelection] = []
+
+    for selection in selections {
+      selection.open { openedSelections.append($0) }
+    }
+
+    XCTAssertEqual(openedSelections, selections)
+    XCTAssertEqual(openedSelections.map(\.messageID), ["message-1", "message-2", "message-3"])
+    XCTAssertEqual(openedSelections.map(\.attachment.id), ["attachment-1", "attachment-2", "attachment-3"])
+  }
+
+  @MainActor
+  func testSameNamedImageEchoesReplaceTheirMatchingLocalRows() {
+    let store = InstaChatStore(
+      configuration: Self.testConfiguration(),
+      client: StubInstaChatClient(),
+      pendingStore: Self.temporaryPendingStore()
+    )
+    let createdAt = Self.date(10)
+    let firstAttachment = InstaChatAttachment(
+      id: "attachment-1",
+      fileName: "photo.jpg",
+      contentType: "image/jpeg",
+      type: .image,
+      url: URL(string: "https://cdn.example.com/images/photo-1.jpg")!
+    )
+    let secondAttachment = InstaChatAttachment(
+      id: "attachment-2",
+      fileName: "photo.jpg",
+      contentType: "image/jpeg",
+      type: .image,
+      url: URL(string: "https://cdn.example.com/images/photo-2.jpg")!
+    )
+    store.append(Self.message(
+      id: "local-1",
+      roomID: "room-images",
+      content: "photo.jpg",
+      type: .image,
+      createdAt: createdAt,
+      attachment: firstAttachment
+    ), replacingLocalEcho: false)
+    store.append(Self.message(
+      id: "local-2",
+      roomID: "room-images",
+      content: "photo.jpg",
+      type: .image,
+      createdAt: createdAt.addingTimeInterval(0.1),
+      attachment: secondAttachment
+    ), replacingLocalEcho: false)
+
+    let firstFinalAttachment = InstaChatAttachment(
+      id: "final-attachment-1",
+      fileName: "photo.jpg",
+      contentType: "image/jpeg",
+      type: .image,
+      url: URL(string: "https://final-cdn.example.com/images/photo-1.jpg")!
+    )
+    let secondFinalAttachment = InstaChatAttachment(
+      id: "final-attachment-2",
+      fileName: "photo.jpg",
+      contentType: "image/jpeg",
+      type: .image,
+      url: URL(string: "https://final-cdn.example.com/images/photo-2.jpg")!
+    )
+    store.applyRealtimeEvent(.message(Self.message(
+      id: "backend-1",
+      roomID: "room-images",
+      content: "photo.jpg",
+      type: .image,
+      createdAt: createdAt.addingTimeInterval(0.2),
+      attachment: firstFinalAttachment
+    )))
+    store.applyRealtimeEvent(.message(Self.message(
+      id: "backend-2",
+      roomID: "room-images",
+      content: "photo.jpg",
+      type: .image,
+      createdAt: createdAt.addingTimeInterval(0.3),
+      attachment: secondFinalAttachment
+    )))
+
+    let messages = store.messages(for: "room-images")
+    XCTAssertEqual(messages.map(\.id), ["backend-1", "backend-2"])
+    XCTAssertEqual(messages.map { $0.attachment?.id }, ["final-attachment-1", "final-attachment-2"])
+    XCTAssertEqual(messages.map { $0.attachment?.url }, [firstFinalAttachment.url, secondFinalAttachment.url])
+  }
+
   func testDuplicateFileNameCacheNeverSubstitutesAnotherSelectedImage() async throws {
     let uniqueName = "selected-photo-\(UUID().uuidString).jpg"
     let firstData = Data("first-image".utf8)

@@ -283,7 +283,8 @@ final class InstaChatStore: ObservableObject {
       return nil
     }
 
-    return messages.lastIndex { candidate in
+    let candidates = messages.indices.filter { index in
+      let candidate = messages[index]
       guard candidate.id.hasPrefix("local-"), candidate.senderID == configuration.user.id else {
         return false
       }
@@ -292,6 +293,25 @@ final class InstaChatStore: ObservableObject {
       }
       return candidate.localEchoKey == message.localEchoKey
     }
+
+    guard message.attachment != nil else {
+      return candidates.last
+    }
+
+    if let exactMatch = candidates.first(where: { index in
+      guard let candidateAttachment = messages[index].attachment,
+            let incomingAttachment = message.attachment else {
+        return false
+      }
+      return candidateAttachment.id == incomingAttachment.id || candidateAttachment.url == incomingAttachment.url
+    }) {
+      return exactMatch
+    }
+
+    // Attachment echoes are emitted in send order. When the backend rewrites
+    // both attachment ID and CDN URL, consume the oldest matching local row
+    // instead of the previous last-match behavior that swapped media cells.
+    return candidates.first
   }
 
   private func reconcileCachedMedia(from localMessage: InstaChatMessage, to backendMessage: InstaChatMessage) {

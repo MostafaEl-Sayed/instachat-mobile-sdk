@@ -824,7 +824,7 @@ private struct MessageBubbleView: View {
   private var content: some View {
     switch message.type {
     case .text:
-      LinkedMessageText(content: message.content, isCurrentUser: isCurrentUser)
+      LinkedMessageText(messageID: message.id, content: message.content, isCurrentUser: isCurrentUser)
         .linkedBubbleStyle(isCurrentUser: isCurrentUser)
     case .location:
       LocationBubble(location: message.location, isCurrentUser: isCurrentUser)
@@ -839,7 +839,7 @@ private struct MessageBubbleView: View {
           onPreview: onPreviewAttachment
         )
       } else {
-        LinkedMessageText(content: message.content, isCurrentUser: isCurrentUser)
+        LinkedMessageText(messageID: message.id, content: message.content, isCurrentUser: isCurrentUser)
           .linkedBubbleStyle(isCurrentUser: isCurrentUser)
       }
     }
@@ -847,18 +847,42 @@ private struct MessageBubbleView: View {
 }
 
 private struct LinkedMessageText: View {
+  var messageID: String
   var content: String
   var isCurrentUser: Bool
 
+  private var copyPayload: MessageCopyPayload {
+    MessageCopyPayload(messageID: messageID, content: content)
+  }
+
   var body: some View {
     Text(MessageLinkifier.attributedString(for: content, isCurrentUser: isCurrentUser))
-      .textSelection(.enabled)
       .fixedSize(horizontal: false, vertical: true)
       .environment(\.openURL, OpenURLAction { url in
         PlatformURLOpener.open(url)
         return .handled
       })
+      .id(copyPayload)
+      .contextMenu {
+        Button {
+          copyPayload.copy(using: PlatformPasteboard.copy)
+        } label: {
+          Label("Copy", systemImage: "doc.on.doc")
+        }
+      }
       .accessibilityLabel(content)
+      .accessibilityAction(named: "Copy message") {
+        copyPayload.copy(using: PlatformPasteboard.copy)
+      }
+  }
+}
+
+struct MessageCopyPayload: Hashable {
+  var messageID: String
+  var content: String
+
+  func copy(using handler: (String) -> Void) {
+    handler(content)
   }
 }
 

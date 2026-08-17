@@ -545,6 +545,23 @@ final class InstaChatContractTests: XCTestCase {
     await cache.removeCachedFile(for: secondRemoteURL, fileName: uniqueName)
   }
 
+  func testCopyActionStaysBoundToExactMessageAfterRowsAreReordered() throws {
+    let payloads = [
+      MessageCopyPayload(messageID: "message-1", content: "First message"),
+      MessageCopyPayload(messageID: "message-2", content: "Second message"),
+      MessageCopyPayload(messageID: "message-3", content: "Third message")
+    ]
+    let recycledRowOrder = [payloads[2], payloads[0], payloads[1]]
+    let pressedPayload = try XCTUnwrap(recycledRowOrder.first { $0.messageID == "message-2" })
+    var copiedText: String?
+
+    pressedPayload.copy { copiedText = $0 }
+
+    XCTAssertEqual(copiedText, "Second message")
+    XCTAssertEqual(pressedPayload, payloads[1])
+    XCTAssertEqual(Set(recycledRowOrder).count, 3)
+  }
+
   @MainActor
   func testFailedTextMessageShowsFriendlyErrorAndRetriesWithoutDuplicate() async throws {
     let client = StubInstaChatClient()

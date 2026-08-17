@@ -985,6 +985,7 @@ private struct AttachmentBubble: View {
       openAccessibilityLabel: "Open image \(attachment.fileName)"
     )
     .frame(width: 220, height: 150)
+    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     .id(mediaIdentity)
   }
@@ -1394,39 +1395,43 @@ private struct AuthenticatedRemoteImage: View {
   }
 
   var body: some View {
-    Group {
-      if let image {
-        loadedImage(image)
-      } else if didFail {
-        Rectangle()
-          .fill(Color.gray.opacity(0.18))
-          .overlay {
-            VStack(spacing: 8) {
-              Image(systemName: "photo.badge.exclamationmark")
-                .font(.system(size: 24, weight: .medium))
-                .foregroundStyle(.secondary)
-              Button {
-                PlatformImageMemoryCache.shared.removeImage(for: url, authorization: authorization)
-                retryGeneration &+= 1
-              } label: {
-                Label("Retry", systemImage: "arrow.clockwise")
-                  .font(.subheadline.weight(.semibold))
-                  .frame(minHeight: 44)
-                  .padding(.horizontal, 10)
+    GeometryReader { geometry in
+      Group {
+        if let image {
+          loadedImage(image, size: geometry.size)
+        } else if didFail {
+          Rectangle()
+            .fill(Color.gray.opacity(0.18))
+            .overlay {
+              VStack(spacing: 8) {
+                Image(systemName: "photo.badge.exclamationmark")
+                  .font(.system(size: 24, weight: .medium))
+                  .foregroundStyle(.secondary)
+                Button {
+                  PlatformImageMemoryCache.shared.removeImage(for: url, authorization: authorization)
+                  retryGeneration &+= 1
+                } label: {
+                  Label("Retry", systemImage: "arrow.clockwise")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 10)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityHint("Attempts to load this image again")
               }
-              .buttonStyle(.borderedProminent)
-              .accessibilityHint("Attempts to load this image again")
             }
-          }
-      } else {
-        Rectangle()
-          .fill(Color.gray.opacity(0.18))
-          .overlay {
-            ProgressView()
-          }
+        } else {
+          Rectangle()
+            .fill(Color.gray.opacity(0.18))
+            .overlay {
+              ProgressView()
+            }
+        }
       }
+      .frame(width: geometry.size.width, height: geometry.size.height)
+      .contentShape(Rectangle())
+      .clipped()
     }
-    .clipped()
     .task(id: ImageLoadRequest(identity: identity, url: url, retryGeneration: retryGeneration)) {
       if let cachedImage = PlatformImageMemoryCache.shared.image(for: url, authorization: authorization) {
         image = cachedImage
@@ -1487,24 +1492,33 @@ private struct AuthenticatedRemoteImage: View {
   }
 
   @ViewBuilder
-  private func loadedImage(_ image: PlatformImage) -> some View {
-    if let previewSelection, let onOpen {
-      Button {
-        previewSelection.open(using: onOpen)
-      } label: {
-        platformImage(image)
-          .resizable()
-          .aspectRatio(contentMode: contentMode)
-      }
-      .buttonStyle(.plain)
-      .contentShape(Rectangle())
-      .id(previewSelection.id)
-      .accessibilityLabel(openAccessibilityLabel ?? "Open image")
-    } else {
+  private func loadedImage(_ image: PlatformImage, size: CGSize) -> some View {
+    ZStack {
       platformImage(image)
         .resizable()
         .aspectRatio(contentMode: contentMode)
+        .frame(width: size.width, height: size.height)
+        .clipped()
+        .allowsHitTesting(false)
+
+      if let previewSelection, let onOpen {
+        Button {
+          previewSelection.open(using: onOpen)
+        } label: {
+          Color.clear
+            .frame(width: size.width, height: size.height)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(width: size.width, height: size.height)
+        .contentShape(Rectangle())
+        .id(previewSelection.id)
+        .accessibilityLabel(openAccessibilityLabel ?? "Open image")
+      }
     }
+    .frame(width: size.width, height: size.height)
+    .contentShape(Rectangle())
+    .clipped()
   }
 
   private func platformImage(_ image: PlatformImage) -> Image {

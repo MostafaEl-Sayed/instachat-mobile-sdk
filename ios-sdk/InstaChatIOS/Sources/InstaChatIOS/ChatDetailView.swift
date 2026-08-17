@@ -113,7 +113,7 @@ struct ChatDetailView: View {
     }
     .mediaPreviewCover(item: $mediaPreviewSelection) { selection in
       MediaPreviewScreen(
-        attachment: selection.attachment,
+        selection: selection,
         mediaAuthorization: mediaAuthorization
       )
       .id(selection.id)
@@ -608,6 +608,8 @@ private struct MediaPickerSheet: UIViewControllerRepresentable {
     var configuration = PHPickerConfiguration(photoLibrary: .shared())
     configuration.filter = mode.filter
     configuration.selectionLimit = mode == .photo ? MediaPreflight.maxImageSelectionCount : 1
+    configuration.selection = .ordered
+    configuration.preferredAssetRepresentationMode = .current
     let picker = PHPickerViewController(configuration: configuration)
     picker.delegate = context.coordinator
     return picker
@@ -829,6 +831,7 @@ private struct MessageBubbleView: View {
     case .image, .file:
       if let attachment = message.attachment {
         AttachmentBubble(
+          messageID: message.id,
           attachment: attachment,
           isCurrentUser: isCurrentUser,
           mediaAuthorization: mediaAuthorization,
@@ -912,6 +915,7 @@ enum PlatformURLOpener {
 }
 
 private struct AttachmentBubble: View {
+  var messageID: String
   var attachment: InstaChatAttachment
   var isCurrentUser: Bool
   var mediaAuthorization: MediaRequestAuthorization
@@ -950,6 +954,7 @@ private struct AttachmentBubble: View {
 
   private var imageBubble: some View {
     AuthenticatedRemoteImage(
+      identity: mediaIdentity.id,
       url: attachment.url,
       fileName: attachment.fileName,
       authorization: mediaAuthorization,
@@ -959,6 +964,11 @@ private struct AttachmentBubble: View {
     )
     .frame(width: 220, height: 150)
     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    .id(mediaIdentity)
+  }
+
+  private var mediaIdentity: MediaAttachmentIdentity {
+    MediaAttachmentIdentity(messageID: messageID, attachment: attachment)
   }
 
   private func fileBubble(systemImage: String, title: String, subtitle: String) -> some View {
@@ -1262,9 +1272,13 @@ private final class VoiceNotePlaybackController: ObservableObject {
 }
 
 private struct MediaPreviewScreen: View {
-  var attachment: InstaChatAttachment
+  var selection: MediaPreviewSelection
   var mediaAuthorization: MediaRequestAuthorization
   @Environment(\.dismiss) private var dismiss
+
+  private var attachment: InstaChatAttachment {
+    selection.attachment
+  }
 
   var body: some View {
     NavigationStack {
@@ -1272,6 +1286,7 @@ private struct MediaPreviewScreen: View {
         Color.black.ignoresSafeArea()
         if attachment.type == .image {
           AuthenticatedRemoteImage(
+            identity: selection.id,
             url: attachment.url,
             fileName: attachment.fileName,
             authorization: mediaAuthorization,
@@ -1318,6 +1333,7 @@ private struct MediaPreviewScreen: View {
 }
 
 private struct AuthenticatedRemoteImage: View {
+  var identity: String
   var url: URL
   var fileName: String?
   var authorization: MediaRequestAuthorization
@@ -1330,6 +1346,7 @@ private struct AuthenticatedRemoteImage: View {
   @State private var retryGeneration = 0
 
   init(
+    identity: String,
     url: URL,
     fileName: String? = nil,
     authorization: MediaRequestAuthorization,
@@ -1337,6 +1354,7 @@ private struct AuthenticatedRemoteImage: View {
     onOpen: (() -> Void)? = nil,
     openAccessibilityLabel: String? = nil
   ) {
+    self.identity = identity
     self.url = url
     self.fileName = fileName
     self.authorization = authorization
@@ -1380,7 +1398,7 @@ private struct AuthenticatedRemoteImage: View {
       }
     }
     .clipped()
-    .task(id: ImageLoadRequest(url: url, retryGeneration: retryGeneration)) {
+    .task(id: ImageLoadRequest(identity: identity, url: url, retryGeneration: retryGeneration)) {
       if let cachedImage = PlatformImageMemoryCache.shared.image(for: url, authorization: authorization) {
         image = cachedImage
         didFail = false
@@ -1467,6 +1485,7 @@ private struct AuthenticatedRemoteImage: View {
 }
 
 private struct ImageLoadRequest: Hashable {
+  var identity: String
   var url: URL
   var retryGeneration: Int
 }
@@ -1699,8 +1718,32 @@ private final class VideoPreviewPlaybackController: ObservableObject {
 actor AuthenticatedMediaCache {
   static let shared = AuthenticatedMediaCache()
 
+  private let cacheDirectory: URL
   private var inFlight: [URL: Task<URL, Error>] = [:]
-  private var outgoingLocalFilesByName: [String: URL] = [:]
+  private var outgoingLocalFilesByName: [String: Set<URL>] = [:]
+
+  init(cacheDirectory: URL? = nil) {
+    #if DEBUG
+    let overrideDirectory = ProcessInfo.processInfo.environment["INSTACHAT_MEDIA_CACHE_DIRECTORY"]
+      .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
+    #else
+    let overrideDirectory: URL? = nil
+    #endif
+
+    if let cacheDirectory {
+      self.cacheDirectory = cacheDirectory
+    } else if let overrideDirectory {
+      self.cacheDirectory = overrideDirectory
+    } else {
+      let cachesDirectory = (try? FileManager.default.url(
+        for: .cachesDirectory,
+        in: .userDomainMask,
+        appropriateFor: nil,
+        create: true
+      )) ?? FileManager.default.temporaryDirectory
+      self.cacheDirectory = cachesDirectory.appendingPathComponent("InstaChatMedia", isDirectory: true)
+    }
+  }
 
   func cachedFileExists(for remoteURL: URL, fileName: String? = nil) async -> Bool {
     if remoteURL.isFileURL {
@@ -1725,12 +1768,23 @@ actor AuthenticatedMediaCache {
       return destinationURL
     }
 
-    guard let fileName,
-          let aliasedURL = outgoingLocalFilesByName[normalizedFileName(fileName)],
-          FileManager.default.fileExists(atPath: aliasedURL.path) else {
+    guard let fileName else {
       return nil
     }
-    return aliasedURL
+
+    let key = normalizedFileName(fileName)
+    let existingAliases = Set((outgoingLocalFilesByName[key] ?? []).filter {
+      FileManager.default.fileExists(atPath: $0.path)
+    })
+    outgoingLocalFilesByName[key] = existingAliases
+
+    // A filename alone is not a safe media identity. When several selected
+    // assets share a name, falling back to the last cached file can display
+    // a different image than the message the user tapped.
+    guard existingAliases.count == 1 else {
+      return nil
+    }
+    return existingAliases.first
   }
 
   func removeCachedFile(for remoteURL: URL, fileName: String? = nil) async {
@@ -1861,14 +1915,6 @@ actor AuthenticatedMediaCache {
   }
 
   private func cacheURL(for remoteURL: URL, fileName: String?) throws -> URL {
-    let cacheDirectory = try FileManager.default.url(
-      for: .cachesDirectory,
-      in: .userDomainMask,
-      appropriateFor: nil,
-      create: true
-    )
-    .appendingPathComponent("InstaChatMedia", isDirectory: true)
-
     let extensionFromName = fileName.flatMap { URL(fileURLWithPath: $0).pathExtension.nilIfEmpty }
     let extensionFromURL = remoteURL.pathExtension.nilIfEmpty
     let fileExtension = extensionFromName ?? extensionFromURL ?? "bin"
@@ -1881,7 +1927,7 @@ actor AuthenticatedMediaCache {
     guard let fileName, !fileName.isEmpty else {
       return
     }
-    outgoingLocalFilesByName[normalizedFileName(fileName)] = localURL
+    outgoingLocalFilesByName[normalizedFileName(fileName), default: []].insert(localURL)
   }
 
   private func normalizedFileName(_ fileName: String) -> String {
@@ -2092,6 +2138,26 @@ struct MediaPreviewSelection: Identifiable, Hashable {
   var attachment: InstaChatAttachment
 
   var id: String {
-    [messageID, attachment.id, attachment.url.absoluteString].joined(separator: "|")
+    identity.id
+  }
+
+  var identity: MediaAttachmentIdentity {
+    MediaAttachmentIdentity(messageID: messageID, attachment: attachment)
+  }
+}
+
+struct MediaAttachmentIdentity: Identifiable, Hashable {
+  var messageID: String
+  var attachmentID: String
+  var url: URL
+
+  init(messageID: String, attachment: InstaChatAttachment) {
+    self.messageID = messageID
+    attachmentID = attachment.id
+    url = attachment.url
+  }
+
+  var id: String {
+    [messageID, attachmentID, url.absoluteString].joined(separator: "|")
   }
 }

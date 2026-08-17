@@ -470,6 +470,81 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(videoSelection.attachment.url, video.url)
   }
 
+  func testThreeImagePreviewSelectionsKeepTheExactTappedImage() {
+    let attachments = (1...3).map { index in
+      InstaChatAttachment(
+        id: "attachment-\(index)",
+        fileName: "photo.jpg",
+        contentType: "image/jpeg",
+        type: .image,
+        url: URL(string: "https://cdn.example.com/images/photo-\(index).jpg")!
+      )
+    }
+    let selections = attachments.enumerated().map { index, attachment in
+      MediaPreviewSelection(messageID: "message-\(index + 1)", attachment: attachment)
+    }
+
+    XCTAssertEqual(Set(selections.map(\.id)).count, 3)
+    for (selection, expectedAttachment) in zip(selections, attachments) {
+      XCTAssertEqual(selection.attachment.id, expectedAttachment.id)
+      XCTAssertEqual(selection.attachment.url, expectedAttachment.url)
+      XCTAssertEqual(selection.identity.attachmentID, expectedAttachment.id)
+      XCTAssertEqual(selection.identity.url, expectedAttachment.url)
+    }
+  }
+
+  func testDuplicateFileNameCacheNeverSubstitutesAnotherSelectedImage() async throws {
+    let uniqueName = "selected-photo-\(UUID().uuidString).jpg"
+    let firstData = Data("first-image".utf8)
+    let secondData = Data("second-image".utf8)
+    let firstSource = try Self.temporaryMediaFile(name: "first.jpg", data: firstData)
+    let secondSource = try Self.temporaryMediaFile(name: "second.jpg", data: secondData)
+    let firstRemoteURL = URL(string: "https://cdn.example.com/\(UUID().uuidString).jpg")!
+    let secondRemoteURL = URL(string: "https://cdn.example.com/\(UUID().uuidString).jpg")!
+    let unrelatedRemoteURL = URL(string: "https://cdn.example.com/\(UUID().uuidString).jpg")!
+    let cacheDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("InstaChatMediaTests-\(UUID().uuidString)", isDirectory: true)
+    let cache = AuthenticatedMediaCache(cacheDirectory: cacheDirectory)
+    defer {
+      try? FileManager.default.removeItem(at: firstSource)
+      try? FileManager.default.removeItem(at: secondSource)
+      try? FileManager.default.removeItem(at: cacheDirectory)
+    }
+
+    try await cache.storeLocalFile(
+      at: firstSource,
+      for: firstRemoteURL,
+      fileName: uniqueName
+    )
+    try await cache.storeLocalFile(
+      at: secondSource,
+      for: secondRemoteURL,
+      fileName: uniqueName
+    )
+
+    let firstCachedCandidate = await cache.existingLocalFileURL(
+      for: firstRemoteURL,
+      fileName: uniqueName
+    )
+    let secondCachedCandidate = await cache.existingLocalFileURL(
+      for: secondRemoteURL,
+      fileName: uniqueName
+    )
+    let firstCachedURL = try XCTUnwrap(firstCachedCandidate)
+    let secondCachedURL = try XCTUnwrap(secondCachedCandidate)
+    let ambiguousFallback = await cache.existingLocalFileURL(
+      for: unrelatedRemoteURL,
+      fileName: uniqueName
+    )
+
+    XCTAssertEqual(try Data(contentsOf: firstCachedURL), firstData)
+    XCTAssertEqual(try Data(contentsOf: secondCachedURL), secondData)
+    XCTAssertNil(ambiguousFallback, "An ambiguous filename must never resolve to a different selected image")
+
+    await cache.removeCachedFile(for: firstRemoteURL, fileName: uniqueName)
+    await cache.removeCachedFile(for: secondRemoteURL, fileName: uniqueName)
+  }
+
   @MainActor
   func testFailedTextMessageShowsFriendlyErrorAndRetriesWithoutDuplicate() async throws {
     let client = StubInstaChatClient()

@@ -1,10 +1,12 @@
 #if os(iOS)
 import CoreLocation
 import GoogleMaps
+import MapKit
 import SwiftUI
 
 struct MapLocationPickerView: View {
   @ObservedObject var locationProvider: CurrentLocationProvider
+  var mapProvider: InstaChatLocationMapProvider
   var onSend: (InstaChatLocation) -> Void
   var onCancel: () -> Void
 
@@ -18,13 +20,7 @@ struct MapLocationPickerView: View {
   var body: some View {
     NavigationStack {
       ZStack {
-        GoogleMapPickerSurface(
-          coordinate: $selectedCoordinate,
-          zoom: $zoom,
-          onCameraMoved: {
-            hasSelection = true
-          }
-        )
+        mapSurface
         .ignoresSafeArea(edges: .bottom)
 
         Image(systemName: "mappin")
@@ -89,6 +85,29 @@ struct MapLocationPickerView: View {
     }
   }
 
+  @ViewBuilder
+  private var mapSurface: some View {
+    switch mapProvider {
+    case .apple:
+      AppleMapPickerSurface(
+        coordinate: $selectedCoordinate,
+        zoom: $zoom,
+        onCameraMoved: markSelection
+      )
+    case .google(let apiKey):
+      GoogleMapPickerSurface(
+        apiKey: apiKey,
+        coordinate: $selectedCoordinate,
+        zoom: $zoom,
+        onCameraMoved: markSelection
+      )
+    }
+  }
+
+  private func markSelection() {
+    hasSelection = true
+  }
+
   private func mapZoomButton(systemImage: String, delta: Float) -> some View {
     Button {
       zoom = min(max(zoom + delta, 1), 21)
@@ -140,6 +159,7 @@ struct MapLocationPickerView: View {
 }
 
 private struct GoogleMapPickerSurface: UIViewRepresentable {
+  var apiKey: String
   @Binding var coordinate: CLLocationCoordinate2D
   @Binding var zoom: Float
   var onCameraMoved: () -> Void
@@ -149,6 +169,7 @@ private struct GoogleMapPickerSurface: UIViewRepresentable {
   }
 
   func makeUIView(context: Context) -> GMSMapView {
+    InstaChatGoogleMapsRuntime.configure(apiKey: apiKey)
     let options = GMSMapViewOptions()
     options.camera = GMSCameraPosition(
       latitude: coordinate.latitude,
@@ -196,6 +217,71 @@ private struct GoogleMapPickerSurface: UIViewRepresentable {
       isApplyingSwiftUIUpdate = false
       parent.coordinate = position.target
       parent.zoom = position.zoom
+      if !wasProgrammaticUpdate {
+        parent.onCameraMoved()
+      }
+    }
+  }
+}
+
+private struct AppleMapPickerSurface: UIViewRepresentable {
+  @Binding var coordinate: CLLocationCoordinate2D
+  @Binding var zoom: Float
+  var onCameraMoved: () -> Void
+
+  func makeCoordinator() -> Coordinator {
+    Coordinator(parent: self)
+  }
+
+  func makeUIView(context: Context) -> MKMapView {
+    let mapView = MKMapView(frame: .zero)
+    mapView.delegate = context.coordinator
+    mapView.showsCompass = true
+    mapView.isRotateEnabled = true
+    mapView.isScrollEnabled = true
+    mapView.isPitchEnabled = true
+    mapView.isZoomEnabled = true
+    mapView.setRegion(region(for: coordinate, zoom: zoom), animated: false)
+    return mapView
+  }
+
+  func updateUIView(_ mapView: MKMapView, context: Context) {
+    context.coordinator.parent = self
+    let currentCenter = mapView.region.center
+    let currentZoom = Self.zoom(for: mapView.region)
+    guard !currentCenter.isApproximatelyEqual(to: coordinate) || abs(currentZoom - zoom) > 0.05 else {
+      return
+    }
+
+    context.coordinator.isApplyingSwiftUIUpdate = true
+    mapView.setRegion(region(for: coordinate, zoom: zoom), animated: true)
+  }
+
+  private func region(for coordinate: CLLocationCoordinate2D, zoom: Float) -> MKCoordinateRegion {
+    let longitudeDelta = min(max(360 / pow(2, Double(zoom)), 0.000_5), 180)
+    return MKCoordinateRegion(
+      center: coordinate,
+      span: MKCoordinateSpan(latitudeDelta: longitudeDelta, longitudeDelta: longitudeDelta)
+    )
+  }
+
+  private static func zoom(for region: MKCoordinateRegion) -> Float {
+    Float(log2(360 / max(region.span.longitudeDelta, 0.000_5)))
+  }
+
+  final class Coordinator: NSObject, MKMapViewDelegate {
+    var parent: AppleMapPickerSurface
+    var isApplyingSwiftUIUpdate = false
+
+    init(parent: AppleMapPickerSurface) {
+      self.parent = parent
+    }
+
+    func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
+      let wasProgrammaticUpdate = isApplyingSwiftUIUpdate
+      isApplyingSwiftUIUpdate = false
+      parent.coordinate = mapView.region.center
+      parent.zoom = AppleMapPickerSurface.zoom(for: mapView.region)
       if !wasProgrammaticUpdate {
         parent.onCameraMoved()
       }

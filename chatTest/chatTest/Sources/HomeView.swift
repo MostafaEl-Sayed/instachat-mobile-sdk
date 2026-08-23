@@ -5,6 +5,7 @@ struct HomeView: View {
   @State private var baseURLText = ProcessInfo.processInfo.environment["INSTACHAT_BASE_URL"] ?? DemoCredentials.baseURL
   @State private var appBackendBaseURLText = ProcessInfo.processInfo.environment["GRANDIZAR_BACKEND_BASE_URL"] ?? DemoCredentials.appBackendBaseURL
   @State private var token = ProcessInfo.processInfo.environment["INSTACHAT_TOKEN"] ?? DemoCredentials.token
+  @State private var googleMapsAPIKey = ProcessInfo.processInfo.environment["GOOGLE_MAPS_API_KEY"] ?? ""
   @State private var providerIDText = ProcessInfo.processInfo.environment["GRANDIZAR_PROVIDER_ID"] ?? DemoCredentials.providerID
   @State private var roomIDText = ProcessInfo.processInfo.environment["INSTACHAT_ROOM_ID"] ?? ""
   @State private var initializedSDK: InstaChatSDK?
@@ -36,6 +37,10 @@ struct HomeView: View {
             .autocorrectionDisabled()
 
           SecureField("Token", text: $token)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+
+          SecureField("Google Maps API key (optional)", text: $googleMapsAPIKey)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
         } header: {
@@ -144,7 +149,8 @@ struct HomeView: View {
           let sdk = InstaChat.initialize(
             baseURL: URL(string: baseURL)!,
             token: token,
-            user: InstaChatUser(id: "user-1", name: "Mostafa")
+            user: InstaChatUser(id: "user-1", name: "Mostafa"),
+            googleMapsAPIKey: googleMapsAPIKey
           )
 
           let roomID = try await appBackend.startChat(providerID: "345", token: token)
@@ -201,7 +207,8 @@ struct HomeView: View {
     return InstaChat.initialize(
       baseURL: baseURL,
       token: token.trimmingCharacters(in: .whitespacesAndNewlines),
-      user: InstaChatUser(id: DemoCredentials.userID, name: DemoCredentials.userName)
+      user: InstaChatUser(id: DemoCredentials.userID, name: DemoCredentials.userName),
+      googleMapsAPIKey: googleMapsAPIKey
     )
   }
 

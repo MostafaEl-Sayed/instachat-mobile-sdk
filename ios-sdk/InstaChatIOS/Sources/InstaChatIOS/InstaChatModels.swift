@@ -8,6 +8,7 @@ public struct InstaChatConfiguration: Sendable {
   public var roomTitle: String?
   public var historyLimit: Int
   public var title: String
+  public var googleMapsAPIKey: String?
 
   public init(
     baseURL: URL,
@@ -16,7 +17,8 @@ public struct InstaChatConfiguration: Sendable {
     roomID: String? = nil,
     roomTitle: String? = nil,
     historyLimit: Int = 25,
-    title: String = "Messages"
+    title: String = "Messages",
+    googleMapsAPIKey: String? = nil
   ) {
     self.baseURL = baseURL
     self.token = token
@@ -25,6 +27,7 @@ public struct InstaChatConfiguration: Sendable {
     self.roomTitle = roomTitle
     self.historyLimit = historyLimit
     self.title = title
+    self.googleMapsAPIKey = googleMapsAPIKey?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
   }
 
   public func openingRoom(id roomID: String, title roomTitle: String? = nil) -> InstaChatConfiguration {
@@ -35,8 +38,16 @@ public struct InstaChatConfiguration: Sendable {
       roomID: roomID,
       roomTitle: roomTitle,
       historyLimit: historyLimit,
-      title: title
+      title: title,
+      googleMapsAPIKey: googleMapsAPIKey
     )
+  }
+
+  var locationMapProvider: InstaChatLocationMapProvider {
+    guard let googleMapsAPIKey else {
+      return .apple
+    }
+    return .google(apiKey: googleMapsAPIKey)
   }
 
   var initialRoom: InstaChatRoom? {
@@ -45,6 +56,17 @@ public struct InstaChatConfiguration: Sendable {
     }
 
     return InstaChatRoom(id: roomID, title: roomTitle ?? "Chat")
+  }
+}
+
+enum InstaChatLocationMapProvider: Equatable, Sendable {
+  case apple
+  case google(apiKey: String)
+}
+
+private extension String {
+  var nilIfEmpty: String? {
+    isEmpty ? nil : self
   }
 }
 

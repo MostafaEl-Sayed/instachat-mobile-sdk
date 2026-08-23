@@ -29,7 +29,8 @@ struct SupportChatScreen: View {
     let sdk = InstaChat.initialize(
       baseURL: baseURL,
       token: token,
-      user: InstaChatUser(id: "user-1", name: "Mostafa")
+      user: InstaChatUser(id: "user-1", name: "Mostafa"),
+      googleMapsAPIKey: googleMapsAPIKey
     )
 
     sdk.chatListView(
@@ -70,7 +71,8 @@ import InstaChatIOS
 let sdk = InstaChat.initialize(
   baseURL: URL(string: "https://instachat.instakit.pro")!,
   token: token,
-  user: InstaChatUser(id: "user-1", name: "Mostafa")
+  user: InstaChatUser(id: "user-1", name: "Mostafa"),
+  googleMapsAPIKey: googleMapsAPIKey
 )
 
 sdk.presentChatList(from: viewController)
@@ -92,7 +94,15 @@ Add the permissions your host app enables:
 <string>Record voice notes for chat.</string>
 ```
 
-Location sharing is handled inside the SDK. When the user taps Location, the SDK requests `When In Use` permission if needed, reads the current device coordinate, reverse-geocodes a readable name when available, and sends the backend `location` message payload.
+Location sharing is handled inside the SDK. When the user taps Location, the SDK can send the current device coordinate or let the user choose another point on a map. Pass `googleMapsAPIKey` to `InstaChat.initialize(...)` to use Google Maps. When the key is absent, `nil`, or empty, the picker uses Apple Maps. A supplied key must have Maps SDK for iOS enabled and be restricted to the host app bundle identifier.
+
+If the host app constructs its own Google maps before InstaChat is initialized, configure the shared Google Maps runtime once at launch:
+
+```swift
+InstaChat.configureGoogleMaps(apiKey: googleMapsAPIKey)
+```
+
+Then pass the same key to `InstaChat.initialize(...)`. This avoids initializing Google's shared service more than once.
 
 ## Media Limits
 

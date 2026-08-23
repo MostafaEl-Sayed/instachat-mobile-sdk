@@ -32,6 +32,35 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(sdk.configuration.initialRoom?.title, "Support")
   }
 
+  func testLocationPickerUsesAppleMapsWhenGoogleKeyIsNotProvided() {
+    let configuration = Self.testConfiguration()
+    let whitespaceConfiguration = InstaChatConfiguration(
+      baseURL: configuration.baseURL,
+      token: configuration.token,
+      user: configuration.user,
+      googleMapsAPIKey: "  \n "
+    )
+
+    XCTAssertEqual(configuration.locationMapProvider, .apple)
+    XCTAssertEqual(whitespaceConfiguration.locationMapProvider, .apple)
+    XCTAssertNil(whitespaceConfiguration.googleMapsAPIKey)
+  }
+
+  func testInjectedGoogleMapsKeyIsPreservedWhenOpeningRoom() {
+    let sdk = InstaChat.initialize(
+      baseURL: URL(string: "https://instachat.instakit.pro")!,
+      token: "token",
+      user: InstaChatUser(id: "user-1", name: "Mostafa"),
+      googleMapsAPIKey: " google-key "
+    )
+
+    let roomConfiguration = sdk.configuration.openingRoom(id: "room-1")
+
+    XCTAssertEqual(sdk.configuration.googleMapsAPIKey, "google-key")
+    XCTAssertEqual(sdk.configuration.locationMapProvider, .google(apiKey: "google-key"))
+    XCTAssertEqual(roomConfiguration.locationMapProvider, .google(apiKey: "google-key"))
+  }
+
   func testRoomListDecodesLiveBackendShapeWithEmptyAvatarURL() throws {
     let json = """
     {

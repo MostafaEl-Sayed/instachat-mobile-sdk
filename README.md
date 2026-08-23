@@ -30,7 +30,8 @@ import InstaChatIOS
 let sdk = InstaChat.initialize(
   baseURL: URL(string: "https://instachat.instakit.pro")!,
   token: token,
-  user: InstaChatUser(id: "user-1", name: "Mostafa")
+  user: InstaChatUser(id: "user-1", name: "Mostafa"),
+  googleMapsAPIKey: googleMapsAPIKey
 )
 
 sdk.chatListView()
@@ -90,17 +91,9 @@ export function SupportChat() {
 }
 ```
 
-Add native permissions for microphone, photos/media, and location in your host app. The native iOS SDK owns photo/video picking, voice-note recording, and location sharing. The location action lets the user either send the current device coordinate or choose another point with a movable Google Maps pin before sending. Manual map selection does not require GPS permission.
+Add native permissions for microphone, photos/media, and location in your host app. The native iOS SDK owns photo/video picking, voice-note recording, and location sharing. Pass `googleMapsAPIKey` to `InstaChat.initialize(...)` to use Google Maps for manual location selection. Omit it, pass `nil`, or pass an empty value to use Apple Maps instead. Manual map selection does not require GPS permission.
 
-Before presenting `InstaChatView`, initialize Google Maps once from the host app, typically in the app delegate:
-
-```swift
-import GoogleMaps
-
-GMSServices.provideAPIKey("YOUR_GOOGLE_MAPS_IOS_API_KEY")
-```
-
-The Swift package includes the Google Maps iOS dependency. The API key must have Maps SDK for iOS enabled and be restricted to the host app bundle identifier. Chat detail also hides and restores the host tab bar while the conversation is visible, including UIKit `UITabBarController` hosts that embed the SDK with `UIHostingController`.
+The Swift package includes the Google Maps iOS dependency. A supplied key must have Maps SDK for iOS enabled and be restricted to the host app bundle identifier. Apps that create their own Google map before initializing InstaChat should call `InstaChat.configureGoogleMaps(apiKey:)` once during app launch, then pass the same key to `initialize`. Apps that only use Google Maps inside chat do not need that extra call. Chat detail also hides and restores the host tab bar while the conversation is visible, including UIKit `UITabBarController` hosts that embed the SDK with `UIHostingController`.
 
 Media rules in the native iOS SDK:
 

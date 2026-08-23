@@ -18,6 +18,7 @@ For local validation without committing credentials, pass launch environment val
 
 ```sh
 INSTACHAT_TOKEN="<user-jwt>"
+GOOGLE_MAPS_API_KEY="<optional-google-maps-ios-key>"
 GRANDIZAR_BACKEND_BASE_URL="https://your-grandizar-app-backend.example"
 GRANDIZAR_PROVIDER_ID="345"
 INSTACHAT_AUTO_OPEN_CHAT=1
@@ -50,7 +51,8 @@ import InstaChatIOS
 let sdk = InstaChat.initialize(
   baseURL: URL(string: "https://instachat.instakit.pro")!,
   token: token,
-  user: InstaChatUser(id: "user-1", name: "Mostafa")
+  user: InstaChatUser(id: "user-1", name: "Mostafa"),
+  googleMapsAPIKey: googleMapsAPIKey
 )
 
 // Option A: open the SDK chat list.
@@ -60,6 +62,8 @@ sdk.chatListView()
 let roomID = try await grandizarBackend.startChat(providerID: "345", token: token)
 sdk.chatView(roomID: roomID, title: "Support")
 ```
+
+Pass a Google Maps iOS key to use Google Maps for manual location selection. Leave the key empty to verify the automatic Apple Maps fallback.
 
 For production, the native app should inject the authenticated user token from its own login/session flow. The host app owns presentation state and any app-backend workflow such as `POST /api/v1/user-app/chats/start`; the SDK renders the close button and handles normal chat once a `room_id` exists.
 

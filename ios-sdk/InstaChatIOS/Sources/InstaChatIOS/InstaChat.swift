@@ -1,6 +1,7 @@
 import SwiftUI
 
 #if os(iOS)
+import GoogleMaps
 import UIKit
 #endif
 
@@ -10,10 +11,29 @@ public enum InstaChat {
     token: String,
     user: InstaChatUser,
     historyLimit: Int = 25,
-    title: String = "Messages"
+    title: String = "Messages",
+    googleMapsAPIKey: String? = nil
   ) -> InstaChatSDK {
-    InstaChatSDK(baseURL: baseURL, token: token, user: user, historyLimit: historyLimit, title: title)
+    InstaChatSDK(
+      baseURL: baseURL,
+      token: token,
+      user: user,
+      historyLimit: historyLimit,
+      title: title,
+      googleMapsAPIKey: googleMapsAPIKey
+    )
   }
+
+  #if os(iOS)
+  /// Initializes Google Maps for hosts that create their own Google map before presenting chat.
+  /// Apps that only use Google Maps inside InstaChat can omit this call and pass the key to
+  /// `initialize`; the SDK will configure Google Maps before constructing the picker.
+  @MainActor
+  @discardableResult
+  public static func configureGoogleMaps(apiKey: String) -> Bool {
+    InstaChatGoogleMapsRuntime.configure(apiKey: apiKey)
+  }
+  #endif
 
   #if os(iOS)
   /// Legacy compatibility API. Prefer `InstaChat.initialize(...).presentChatList(from:)`
@@ -25,9 +45,15 @@ public enum InstaChat {
     baseURL: URL,
     token: String,
     user: InstaChatUser,
-    roomID: String? = nil
+    roomID: String? = nil,
+    googleMapsAPIKey: String? = nil
   ) {
-    let sdk = initialize(baseURL: baseURL, token: token, user: user)
+    let sdk = initialize(
+      baseURL: baseURL,
+      token: token,
+      user: user,
+      googleMapsAPIKey: googleMapsAPIKey
+    )
     if let roomID {
       sdk.presentChat(from: viewController, roomID: roomID)
     } else {
@@ -45,14 +71,16 @@ public struct InstaChatSDK: Sendable {
     token: String,
     user: InstaChatUser,
     historyLimit: Int = 25,
-    title: String = "Messages"
+    title: String = "Messages",
+    googleMapsAPIKey: String? = nil
   ) {
     self.configuration = InstaChatConfiguration(
       baseURL: baseURL,
       token: token,
       user: user,
       historyLimit: historyLimit,
-      title: title
+      title: title,
+      googleMapsAPIKey: googleMapsAPIKey
     )
   }
 
@@ -105,6 +133,30 @@ public struct InstaChatSDK: Sendable {
   }
   #endif
 }
+
+#if os(iOS)
+@MainActor
+enum InstaChatGoogleMapsRuntime {
+  private static var configuredAPIKey: String?
+
+  @discardableResult
+  static func configure(apiKey: String) -> Bool {
+    let normalizedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalizedKey.isEmpty else {
+      return false
+    }
+    guard configuredAPIKey == nil else {
+      return configuredAPIKey == normalizedKey
+    }
+
+    let didConfigure = GMSServices.provideAPIKey(normalizedKey)
+    if didConfigure {
+      configuredAPIKey = normalizedKey
+    }
+    return didConfigure
+  }
+}
+#endif
 
 public struct InstaChatView: View {
   @StateObject private var store: InstaChatStore

@@ -104,6 +104,7 @@ struct ChatDetailView: View {
     .sheet(isPresented: $isLocationPickerPresented) {
       MapLocationPickerView(
         locationProvider: currentLocationProvider,
+        mapProvider: store.configuration.locationMapProvider,
         onSend: { location in
           isLocationPickerPresented = false
           Task {

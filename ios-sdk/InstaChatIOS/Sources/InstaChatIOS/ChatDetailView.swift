@@ -95,7 +95,7 @@ struct ChatDetailView: View {
         }
       }
       Button("Choose on Map") {
-        isLocationPickerPresented = true
+        presentLocationPicker()
       }
       Button("Cancel", role: .cancel) {}
     } message: {
@@ -417,6 +417,16 @@ struct ChatDetailView: View {
       await store.sendText(message, roomID: room.id)
     }
   }
+
+  #if os(iOS)
+  private func presentLocationPicker() {
+    isLocationOptionsPresented = false
+    Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(250))
+      isLocationPickerPresented = true
+    }
+  }
+  #endif
 
   private func sendCurrentLocation() async {
     #if canImport(CoreLocation)

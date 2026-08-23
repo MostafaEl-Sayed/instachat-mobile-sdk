@@ -32,6 +32,17 @@ final class CurrentLocationProvider: NSObject, ObservableObject {
     return makeSelectedMapLocation(latitude: latitude, longitude: longitude, name: name)
   }
 
+  func userFacingMessage(for error: Error) -> String {
+    if let locationError = error as? CurrentLocationError {
+      return locationError.localizedDescription
+    }
+    if let coreLocationError = error as? CLError,
+       coreLocationError.code == .locationUnknown {
+      return CurrentLocationError.unavailable.localizedDescription
+    }
+    return "Your current location could not be found. Choose a location manually on the map or try again."
+  }
+
   private func requestLocation() async throws -> CLLocation {
     guard CLLocationManager.locationServicesEnabled() else {
       throw CurrentLocationError.servicesDisabled
@@ -132,7 +143,12 @@ extension CurrentLocationProvider: CLLocationManagerDelegate {
 
   nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
     Task { @MainActor in
-      finish(with: .failure(error))
+      if let locationError = error as? CLError,
+         locationError.code == .locationUnknown {
+        finish(with: .failure(CurrentLocationError.unavailable))
+      } else {
+        finish(with: .failure(error))
+      }
     }
   }
 }
@@ -150,7 +166,7 @@ enum CurrentLocationError: LocalizedError {
     case .permissionDenied:
       return "Location permission is required to share your current location."
     case .unavailable:
-      return "Your current location could not be found. Try again in a moment."
+      return "Your current location could not be found. Choose a location manually on the map or try again."
     case .requestInProgress:
       return "Current location is already being requested."
     }

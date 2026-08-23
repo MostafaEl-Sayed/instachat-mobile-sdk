@@ -90,7 +90,7 @@ export function SupportChat() {
 }
 ```
 
-Add native permissions for microphone, photos/media, and location in your host app. The native iOS SDK owns photo/video picking, voice-note recording, and location sharing. The location action lets the user either send the current device coordinate or choose another point with a movable MapKit map pin before sending. Chat detail also hides a host SwiftUI tab bar while the pushed conversation is visible.
+Add native permissions for microphone, photos/media, and location in your host app. The native iOS SDK owns photo/video picking, voice-note recording, and location sharing. The location action lets the user either send the current device coordinate or choose another point with a movable MapKit map pin before sending. Manual map selection does not require GPS permission. Chat detail also hides and restores the host tab bar while the conversation is visible, including UIKit `UITabBarController` hosts that embed the SDK with `UIHostingController`.
 
 Media rules in the native iOS SDK:
 

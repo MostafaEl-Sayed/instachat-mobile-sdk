@@ -81,9 +81,6 @@ struct MapLocationPickerView: View {
           .disabled(!hasSelection || isLocating || isResolving)
         }
       }
-      .task {
-        await centerOnCurrentLocation(reportErrors: false)
-      }
       .alert("Location Unavailable", isPresented: Binding(
         get: { errorMessage != nil },
         set: { if !$0 { errorMessage = nil } }
@@ -113,7 +110,7 @@ struct MapLocationPickerView: View {
   }
 
   @MainActor
-  private func centerOnCurrentLocation(reportErrors: Bool = true) async {
+  private func centerOnCurrentLocation() async {
     guard !isLocating else {
       return
     }
@@ -128,9 +125,7 @@ struct MapLocationPickerView: View {
       )
       hasSelection = true
     } catch {
-      if reportErrors {
-        errorMessage = error.localizedDescription
-      }
+      errorMessage = locationProvider.userFacingMessage(for: error)
     }
   }
 

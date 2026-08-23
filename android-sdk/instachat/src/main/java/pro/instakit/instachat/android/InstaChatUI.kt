@@ -84,6 +84,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.LinkAnnotation
@@ -110,6 +111,7 @@ import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import okhttp3.Headers
 import org.osmdroid.config.Configuration as OsmConfiguration
 import org.osmdroid.events.MapListener
@@ -337,6 +339,7 @@ private fun ChatDetail(
 ) {
   val messages = state.messagesByRoom[room.id].orEmpty()
   val listState = remember(room.id) { androidx.compose.foundation.lazy.LazyListState() }
+  val coroutineScope = rememberCoroutineScope()
   var positionedAtLatest by remember(room.id) { mutableStateOf(false) }
   LaunchedEffect(room.id) { store.openRoom(room) }
   LaunchedEffect(messages.lastOrNull()?.id, room.id) {
@@ -357,6 +360,13 @@ private fun ChatDetail(
       ChatComposer(
         roomId = room.id,
         store = store,
+        onComposerFocused = {
+          coroutineScope.launch {
+            listState.animateScrollToItem(0)
+            delay(280)
+            listState.animateScrollToItem(0)
+          }
+        },
         modifier = Modifier.navigationBarsPadding().imePadding(),
       )
     },
@@ -573,15 +583,18 @@ private fun LocationBubble(message: InstaChatMessage, color: Color, onOpen: () -
 }
 
 @Composable
-private fun ChatComposer(roomId: String, store: InstaChatStore, modifier: Modifier = Modifier) {
+private fun ChatComposer(
+  roomId: String,
+  store: InstaChatStore,
+  onComposerFocused: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
   val context = LocalContext.current
   var text by rememberSaveable(roomId) { mutableStateOf("") }
   var menu by remember { mutableStateOf(false) }
-  var showLocationOptions by remember { mutableStateOf(false) }
   var showLocationPicker by remember { mutableStateOf(false) }
   var pickerLocation by remember { mutableStateOf<InstaChatLocation?>(null) }
   var locationError by remember { mutableStateOf<String?>(null) }
-  var locationPermissionPurpose by remember { mutableStateOf(LocationPermissionPurpose.SEND_CURRENT) }
   val recorder = remember { VoiceNoteRecorder(context) }
   val recording by recorder.state.collectAsState()
   val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris -> store.sendMedia(roomId, uris.take(5)) }
@@ -590,8 +603,6 @@ private fun ChatComposer(roomId: String, store: InstaChatStore, modifier: Modifi
   val handleCurrentLocation: (InstaChatLocation?) -> Unit = { location ->
     if (location == null) {
       locationError = "Your current location could not be found. Check Location Services and try again."
-    } else if (locationPermissionPurpose == LocationPermissionPurpose.SEND_CURRENT) {
-      store.sendLocation(roomId, location)
     } else {
       pickerLocation = location
       showLocationPicker = true
@@ -604,8 +615,7 @@ private fun ChatComposer(roomId: String, store: InstaChatStore, modifier: Modifi
       locationError = "Location permission is required to use your current location. You can still choose a location manually on the map."
     }
   }
-  val requestCurrentLocation: (LocationPermissionPurpose) -> Unit = { purpose ->
-    locationPermissionPurpose = purpose
+  val requestCurrentLocation: () -> Unit = {
     if (hasLocationPermission(context)) {
       currentLocation(context, handleCurrentLocation)
     } else {
@@ -631,7 +641,10 @@ private fun ChatComposer(roomId: String, store: InstaChatStore, modifier: Modifi
           DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text("Share location") }, leadingIcon = { Icon(Icons.Default.LocationOn, null) }, onClick = {
               menu = false
-              showLocationOptions = true
+              showLocationPicker = true
+              if (hasLocationPermission(context)) {
+                currentLocation(context, handleCurrentLocation)
+              }
             })
             DropdownMenuItem(text = { Text("Send photos") }, leadingIcon = { Icon(Icons.Default.Image, null) }, onClick = { menu = false; imagePicker.launch("image/*") })
             DropdownMenuItem(text = { Text("Send video") }, leadingIcon = { Icon(Icons.Default.Videocam, null) }, onClick = { menu = false; videoPicker.launch("video/*") })
@@ -644,7 +657,13 @@ private fun ChatComposer(roomId: String, store: InstaChatStore, modifier: Modifi
         BasicTextField(
           value = text,
           onValueChange = { text = it; store.sendTyping(roomId) },
-          modifier = Modifier.weight(1f).heightIn(min = 44.dp, max = 120.dp).clip(RoundedCornerShape(22.dp)).background(Color(0xFFF2F2F7)).padding(horizontal = 14.dp, vertical = 11.dp),
+          modifier = Modifier
+            .weight(1f)
+            .heightIn(min = 44.dp, max = 120.dp)
+            .onFocusChanged { if (it.isFocused) onComposerFocused() }
+            .clip(RoundedCornerShape(22.dp))
+            .background(Color(0xFFF2F2F7))
+            .padding(horizontal = 14.dp, vertical = 11.dp),
           maxLines = 5,
           textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFF111111)),
           decorationBox = { inner -> Box { if (text.isEmpty()) Text("Message", color = Color(0xFF8E8E93)); inner() } },
@@ -656,40 +675,11 @@ private fun ChatComposer(roomId: String, store: InstaChatStore, modifier: Modifi
     }
   }
 
-  if (showLocationOptions) {
-    AlertDialog(
-      onDismissRequest = { showLocationOptions = false },
-      icon = { Icon(Icons.Default.LocationOn, null) },
-      title = { Text("Share location") },
-      text = { Text("Send where you are now or choose another location on the map.") },
-      confirmButton = {
-        TextButton(onClick = {
-          showLocationOptions = false
-          requestCurrentLocation(LocationPermissionPurpose.SEND_CURRENT)
-        }) {
-          Text("Current location")
-        }
-      },
-      dismissButton = {
-        TextButton(onClick = {
-          showLocationOptions = false
-          showLocationPicker = true
-          if (hasLocationPermission(context)) {
-            locationPermissionPurpose = LocationPermissionPurpose.CENTER_PICKER
-            currentLocation(context, handleCurrentLocation)
-          }
-        }) {
-          Text("Choose on map")
-        }
-      },
-    )
-  }
-
   if (showLocationPicker) {
     MapLocationPickerDialog(
       initialLocation = pickerLocation,
       onUseCurrentLocation = {
-        requestCurrentLocation(LocationPermissionPurpose.CENTER_PICKER)
+        requestCurrentLocation()
       },
       onSend = { latitude, longitude ->
         store.sendLocation(roomId, selectedMapLocation(latitude, longitude))
@@ -712,8 +702,6 @@ private fun ChatComposer(roomId: String, store: InstaChatStore, modifier: Modifi
     )
   }
 }
-
-private enum class LocationPermissionPurpose { SEND_CURRENT, CENTER_PICKER }
 
 @Composable
 private fun MapLocationPickerDialog(

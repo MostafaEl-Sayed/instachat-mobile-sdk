@@ -22,6 +22,7 @@ struct ChatDetailView: View {
   @State private var isPhotoPickerPresented = false
   @State private var isVideoPickerPresented = false
   @State private var mediaPreviewSelection: MediaPreviewSelection?
+  @FocusState private var isComposerFocused: Bool
   @StateObject private var voicePlaybackController = VoiceNotePlaybackController()
   #if canImport(CoreLocation)
   @StateObject private var currentLocationProvider = CurrentLocationProvider()
@@ -29,7 +30,6 @@ struct ChatDetailView: View {
   #if os(iOS)
   @StateObject private var voiceRecorder = VoiceNoteRecorder()
   @State private var mediaPickerMode: MediaPickerMode?
-  @State private var isLocationOptionsPresented = false
   @State private var isLocationPickerPresented = false
   #endif
   var room: InstaChatRoom
@@ -88,19 +88,6 @@ struct ChatDetailView: View {
       handlePickedMedia(item)
     }
     #if os(iOS)
-    .confirmationDialog("Share Location", isPresented: $isLocationOptionsPresented, titleVisibility: .visible) {
-      Button("Send Current Location") {
-        Task {
-          await sendCurrentLocation()
-        }
-      }
-      Button("Choose on Map") {
-        presentLocationPicker()
-      }
-      Button("Cancel", role: .cancel) {}
-    } message: {
-      Text("Send where you are now or move the map pin to another location.")
-    }
     .sheet(isPresented: $isLocationPickerPresented) {
       MapLocationPickerView(
         locationProvider: currentLocationProvider,
@@ -221,6 +208,15 @@ struct ChatDetailView: View {
       .onAppear {
         scrollToBottom(proxy, animated: false)
       }
+      .onChange(of: isComposerFocused) { isFocused in
+        guard isFocused else {
+          return
+        }
+        scrollToBottom(proxy)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+          scrollToBottom(proxy)
+        }
+      }
     }
   }
 
@@ -286,6 +282,7 @@ struct ChatDetailView: View {
       #endif
 
       TextField("Message", text: $draft, axis: .vertical)
+        .focused($isComposerFocused)
         .textFieldStyle(.plain)
         .lineLimit(1...5)
         .padding(.horizontal, 14)
@@ -313,7 +310,7 @@ struct ChatDetailView: View {
       Button {
         isAttachmentPanelVisible = false
         #if os(iOS)
-        isLocationOptionsPresented = true
+        isLocationPickerPresented = true
         #else
         Task {
           await sendCurrentLocation()
@@ -418,16 +415,6 @@ struct ChatDetailView: View {
       await store.sendText(message, roomID: room.id)
     }
   }
-
-  #if os(iOS)
-  private func presentLocationPicker() {
-    isLocationOptionsPresented = false
-    Task { @MainActor in
-      try? await Task.sleep(for: .milliseconds(250))
-      isLocationPickerPresented = true
-    }
-  }
-  #endif
 
   private func sendCurrentLocation() async {
     #if canImport(CoreLocation)

@@ -31,7 +31,9 @@ struct HostTabBarVisibilityBridge: UIViewControllerRepresentable {
 final class HostTabBarVisibilityViewController: UIViewController {
   private var shouldHideTabBar: Bool
   private weak var managedTabBarController: UITabBarController?
+  private weak var managedLayoutController: UIViewController?
   private var originalVisibility: Bool?
+  private var originalAdditionalSafeAreaInsets: UIEdgeInsets?
 
   init(isHidden: Bool) {
     shouldHideTabBar = isHidden
@@ -71,7 +73,14 @@ final class HostTabBarVisibilityViewController: UIViewController {
       return
     }
     tabBarController.tabBar.isHidden = originalVisibility
+    if let managedLayoutController,
+       let originalAdditionalSafeAreaInsets {
+      managedLayoutController.additionalSafeAreaInsets = originalAdditionalSafeAreaInsets
+    }
+    refreshLayout(for: tabBarController)
     self.originalVisibility = nil
+    self.originalAdditionalSafeAreaInsets = nil
+    managedLayoutController = nil
     managedTabBarController = nil
   }
 
@@ -90,9 +99,35 @@ final class HostTabBarVisibilityViewController: UIViewController {
       restoreTabBarVisibility()
       managedTabBarController = tabBarController
       originalVisibility = tabBarController.tabBar.isHidden
+      managedLayoutController = tabBarController.selectedViewController
+      originalAdditionalSafeAreaInsets = managedLayoutController?.additionalSafeAreaInsets
     }
 
     tabBarController.tabBar.isHidden = shouldHideTabBar
+    if shouldHideTabBar {
+      removeHiddenTabBarSafeArea(from: tabBarController)
+    }
+    refreshLayout(for: tabBarController)
+  }
+
+  private func removeHiddenTabBarSafeArea(from tabBarController: UITabBarController) {
+    guard let managedLayoutController,
+          let originalAdditionalSafeAreaInsets else {
+      return
+    }
+
+    let deviceBottomInset = tabBarController.view.window?.safeAreaInsets.bottom ?? 0
+    let tabBarContentHeight = max(0, tabBarController.tabBar.bounds.height - deviceBottomInset)
+    var adjustedInsets = originalAdditionalSafeAreaInsets
+    adjustedInsets.bottom -= tabBarContentHeight
+    managedLayoutController.additionalSafeAreaInsets = adjustedInsets
+  }
+
+  private func refreshLayout(for tabBarController: UITabBarController) {
+    tabBarController.view.setNeedsLayout()
+    tabBarController.view.layoutIfNeeded()
+    managedLayoutController?.view.setNeedsLayout()
+    managedLayoutController?.view.layoutIfNeeded()
   }
 
   private func findHostTabBarController() -> UITabBarController? {

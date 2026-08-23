@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -83,7 +84,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.LinkAnnotation
@@ -97,17 +97,27 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
 import androidx.core.os.CancellationSignal
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import kotlinx.coroutines.delay
 import okhttp3.Headers
+import org.osmdroid.config.Configuration as OsmConfiguration
+import org.osmdroid.events.MapListener
+import org.osmdroid.events.ScrollEvent
+import org.osmdroid.events.ZoomEvent
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.MapView
 import java.io.File
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -144,7 +154,7 @@ internal fun InstaChatRoot(
   DisposableEffect(Unit) { onDispose { playback.release(); sdk.store.closeRoom() } }
 
   Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-    if (selectedRoom == null) {
+    if (initialRoomId == null) {
       ChatRoomList(
         state = state,
         title = sdk.configuration.title,
@@ -162,7 +172,62 @@ internal fun InstaChatRoot(
         configuration = sdk.configuration,
         store = sdk.store,
         playback = playback,
-        onBack = if (initialRoomId == null) ({ sdk.store.closeRoom(); selectedRoom = null; sdk.store.loadRooms() }) else null,
+        onBack = null,
+        onClose = onClose,
+      )
+    }
+  }
+
+  if (initialRoomId == null) {
+    selectedRoom?.let { roomId ->
+      val room = state.rooms.firstOrNull { it.id == roomId }
+        ?: InstaChatRoom(roomId, selectedTitle ?: "Chat")
+      FullScreenChatDetail(
+        state = state,
+        room = room,
+        currentUserId = sdk.configuration.user.id,
+        configuration = sdk.configuration,
+        store = sdk.store,
+        playback = playback,
+        onBack = {
+          selectedRoom = null
+          sdk.store.loadRooms()
+        },
+        onClose = onClose,
+      )
+    }
+  }
+}
+
+@Composable
+private fun FullScreenChatDetail(
+  state: InstaChatState,
+  room: InstaChatRoom,
+  currentUserId: String,
+  configuration: InstaChatConfiguration,
+  store: InstaChatStore,
+  playback: MediaPlaybackController,
+  onBack: () -> Unit,
+  onClose: (() -> Unit)?,
+) {
+  Dialog(
+    onDismissRequest = onBack,
+    properties = DialogProperties(
+      dismissOnBackPress = true,
+      dismissOnClickOutside = false,
+      usePlatformDefaultWidth = false,
+      decorFitsSystemWindows = false,
+    ),
+  ) {
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+      ChatDetail(
+        state = state,
+        room = room,
+        currentUserId = currentUserId,
+        configuration = configuration,
+        store = store,
+        playback = playback,
+        onBack = onBack,
         onClose = onClose,
       )
     }
@@ -512,14 +577,39 @@ private fun ChatComposer(roomId: String, store: InstaChatStore, modifier: Modifi
   val context = LocalContext.current
   var text by rememberSaveable(roomId) { mutableStateOf("") }
   var menu by remember { mutableStateOf(false) }
+  var showLocationOptions by remember { mutableStateOf(false) }
+  var showLocationPicker by remember { mutableStateOf(false) }
+  var pickerLocation by remember { mutableStateOf<InstaChatLocation?>(null) }
+  var locationError by remember { mutableStateOf<String?>(null) }
+  var locationPermissionPurpose by remember { mutableStateOf(LocationPermissionPurpose.SEND_CURRENT) }
   val recorder = remember { VoiceNoteRecorder(context) }
   val recording by recorder.state.collectAsState()
   val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris -> store.sendMedia(roomId, uris.take(5)) }
   val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let { store.sendMedia(roomId, listOf(it)) } }
   val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { if (it) recorder.start() }
+  val handleCurrentLocation: (InstaChatLocation?) -> Unit = { location ->
+    if (location == null) {
+      locationError = "Your current location could not be found. Check Location Services and try again."
+    } else if (locationPermissionPurpose == LocationPermissionPurpose.SEND_CURRENT) {
+      store.sendLocation(roomId, location)
+    } else {
+      pickerLocation = location
+      showLocationPicker = true
+    }
+  }
   val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
-    if (granted.values.any { it }) currentLocation(context) { location ->
-      if (location != null) store.sendLocation(roomId, location) else store.dismissError()
+    if (granted.values.any { it }) {
+      currentLocation(context, handleCurrentLocation)
+    } else {
+      locationError = "Location permission is required to use your current location. You can still choose a location manually on the map."
+    }
+  }
+  val requestCurrentLocation: (LocationPermissionPurpose) -> Unit = { purpose ->
+    locationPermissionPurpose = purpose
+    if (hasLocationPermission(context)) {
+      currentLocation(context, handleCurrentLocation)
+    } else {
+      locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
     }
   }
 
@@ -541,7 +631,7 @@ private fun ChatComposer(roomId: String, store: InstaChatStore, modifier: Modifi
           DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text("Share location") }, leadingIcon = { Icon(Icons.Default.LocationOn, null) }, onClick = {
               menu = false
-              locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+              showLocationOptions = true
             })
             DropdownMenuItem(text = { Text("Send photos") }, leadingIcon = { Icon(Icons.Default.Image, null) }, onClick = { menu = false; imagePicker.launch("image/*") })
             DropdownMenuItem(text = { Text("Send video") }, leadingIcon = { Icon(Icons.Default.Videocam, null) }, onClick = { menu = false; videoPicker.launch("video/*") })
@@ -561,6 +651,200 @@ private fun ChatComposer(roomId: String, store: InstaChatStore, modifier: Modifi
         )
         IconButton(onClick = { val value = text; text = ""; store.sendText(roomId, value) }, enabled = text.isNotBlank()) {
           Icon(Icons.AutoMirrored.Filled.Send, "Send message", tint = if (text.isNotBlank()) MaterialTheme.colorScheme.primary else Color(0xFFC7C7CC))
+        }
+      }
+    }
+  }
+
+  if (showLocationOptions) {
+    AlertDialog(
+      onDismissRequest = { showLocationOptions = false },
+      icon = { Icon(Icons.Default.LocationOn, null) },
+      title = { Text("Share location") },
+      text = { Text("Send where you are now or choose another location on the map.") },
+      confirmButton = {
+        TextButton(onClick = {
+          showLocationOptions = false
+          requestCurrentLocation(LocationPermissionPurpose.SEND_CURRENT)
+        }) {
+          Text("Current location")
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = {
+          showLocationOptions = false
+          showLocationPicker = true
+          if (hasLocationPermission(context)) {
+            locationPermissionPurpose = LocationPermissionPurpose.CENTER_PICKER
+            currentLocation(context, handleCurrentLocation)
+          }
+        }) {
+          Text("Choose on map")
+        }
+      },
+    )
+  }
+
+  if (showLocationPicker) {
+    MapLocationPickerDialog(
+      initialLocation = pickerLocation,
+      onUseCurrentLocation = {
+        requestCurrentLocation(LocationPermissionPurpose.CENTER_PICKER)
+      },
+      onSend = { latitude, longitude ->
+        store.sendLocation(roomId, selectedMapLocation(latitude, longitude))
+        showLocationPicker = false
+      },
+      onDismiss = { showLocationPicker = false },
+    )
+  }
+
+  locationError?.let { message ->
+    AlertDialog(
+      onDismissRequest = { locationError = null },
+      title = { Text("Location unavailable") },
+      text = { Text(message) },
+      confirmButton = {
+        TextButton(onClick = { locationError = null }) {
+          Text("OK")
+        }
+      },
+    )
+  }
+}
+
+private enum class LocationPermissionPurpose { SEND_CURRENT, CENTER_PICKER }
+
+@Composable
+private fun MapLocationPickerDialog(
+  initialLocation: InstaChatLocation?,
+  onUseCurrentLocation: () -> Unit,
+  onSend: (Double, Double) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  val context = LocalContext.current
+  val lifecycleOwner = LocalLifecycleOwner.current
+  var hasSelection by remember { mutableStateOf(initialLocation != null) }
+  val mapView = remember(context) {
+    OsmConfiguration.getInstance().userAgentValue = context.packageName
+    MapView(context).apply {
+      setTileSource(TileSourceFactory.MAPNIK)
+      setMultiTouchControls(true)
+      setBuiltInZoomControls(false)
+      minZoomLevel = 2.0
+      maxZoomLevel = 20.0
+      controller.setZoom(2.5)
+      controller.setCenter(GeoPoint(20.0, 0.0))
+      addMapListener(object : MapListener {
+        override fun onScroll(event: ScrollEvent?): Boolean {
+          hasSelection = true
+          return false
+        }
+
+        override fun onZoom(event: ZoomEvent?): Boolean {
+          hasSelection = true
+          return false
+        }
+      })
+    }
+  }
+
+  LaunchedEffect(initialLocation?.latitude, initialLocation?.longitude) {
+    initialLocation?.let { location ->
+      mapView.controller.setZoom(16.0)
+      mapView.controller.animateTo(GeoPoint(location.latitude, location.longitude))
+      hasSelection = true
+    }
+  }
+
+  DisposableEffect(mapView, lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event ->
+      when (event) {
+        Lifecycle.Event.ON_RESUME -> mapView.onResume()
+        Lifecycle.Event.ON_PAUSE -> mapView.onPause()
+        else -> Unit
+      }
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    mapView.onResume()
+    onDispose {
+      lifecycleOwner.lifecycle.removeObserver(observer)
+      mapView.onPause()
+      mapView.onDetach()
+    }
+  }
+
+  Dialog(
+    onDismissRequest = onDismiss,
+    properties = DialogProperties(
+      dismissOnBackPress = true,
+      dismissOnClickOutside = false,
+      usePlatformDefaultWidth = false,
+      decorFitsSystemWindows = false,
+    ),
+  ) {
+    Scaffold(
+      modifier = Modifier.fillMaxSize().statusBarsPadding(),
+      topBar = {
+        Box(Modifier.fillMaxWidth().height(56.dp).background(Color.White).padding(horizontal = 8.dp)) {
+          TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
+            Text("Cancel")
+          }
+          Text("Choose location", fontWeight = FontWeight.SemiBold, fontSize = 18.sp, modifier = Modifier.align(Alignment.Center))
+          TextButton(
+            onClick = {
+              val center = mapView.mapCenter
+              onSend(center.latitude, center.longitude)
+            },
+            enabled = hasSelection,
+            modifier = Modifier.align(Alignment.CenterEnd),
+          ) {
+            Text("Send")
+          }
+        }
+      },
+      bottomBar = {
+        Surface(color = Color.White, shadowElevation = 4.dp) {
+          Row(
+            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            TextButton(onClick = onUseCurrentLocation) {
+              Icon(Icons.Default.LocationOn, null)
+              Spacer(Modifier.width(6.dp))
+              Text("Use my location")
+            }
+            Spacer(Modifier.weight(1f))
+            Text("Move the map to place the pin", fontSize = 12.sp, color = Color(0xFF6E6E73))
+          }
+        }
+      },
+      contentWindowInsets = WindowInsets(0),
+    ) { padding ->
+      Box(Modifier.fillMaxSize().padding(padding)) {
+        AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
+        Icon(
+          Icons.Default.LocationOn,
+          contentDescription = "Selected location",
+          tint = Color(0xFFFF3B30),
+          modifier = Modifier.align(Alignment.Center).size(46.dp).padding(bottom = 20.dp),
+        )
+        Column(
+          Modifier.align(Alignment.CenterEnd).padding(12.dp).background(Color.White, RoundedCornerShape(10.dp)),
+        ) {
+          IconButton(onClick = {
+            mapView.controller.zoomIn()
+            hasSelection = true
+          }) {
+            Icon(Icons.Default.Add, "Zoom in")
+          }
+          HorizontalDivider(Modifier.width(36.dp))
+          IconButton(onClick = {
+            mapView.controller.zoomOut()
+            hasSelection = true
+          }) {
+            Icon(Icons.Default.Remove, "Zoom out")
+          }
         }
       }
     }
@@ -712,10 +996,12 @@ private fun InstaChatAttachment.hasUsableLocalFile(): Boolean = localUri?.let { 
   uri.scheme != "file" || uri.path?.let(::File)?.isFile == true
 } == true
 
-private fun currentLocation(context: Context, callback: (InstaChatLocation?) -> Unit) {
-  val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+private fun hasLocationPermission(context: Context): Boolean =
+  ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
     ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-  if (!granted) { callback(null); return }
+
+private fun currentLocation(context: Context, callback: (InstaChatLocation?) -> Unit) {
+  if (!hasLocationPermission(context)) { callback(null); return }
   val manager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
   val provider = when {
     manager.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
@@ -726,6 +1012,12 @@ private fun currentLocation(context: Context, callback: (InstaChatLocation?) -> 
     callback(InstaChatLocation(location.latitude, location.longitude, "Current location"))
   }
 }
+
+internal fun selectedMapLocation(latitude: Double, longitude: Double) = InstaChatLocation(
+  latitude = latitude.coerceIn(-90.0, 90.0),
+  longitude = longitude.coerceIn(-180.0, 180.0),
+  name = "Selected location",
+)
 
 private fun formatRoomTime(instant: java.time.Instant): String = DateTimeFormatter.ofPattern("h:mm a").withZone(ZoneId.systemDefault()).format(instant)
 private fun formatMessageTime(instant: java.time.Instant): String = formatRoomTime(instant)

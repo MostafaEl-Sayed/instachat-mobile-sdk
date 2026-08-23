@@ -90,7 +90,7 @@ export function SupportChat() {
 }
 ```
 
-Add native permissions for microphone, photos/media, and location in your host app. The native iOS SDK owns photo/video picking, current-location lookup, voice-note recording, and sending. Location sharing requests `When In Use` permission, reads the current device coordinate, reverse-geocodes a display name when available, and sends the backend `location` payload.
+Add native permissions for microphone, photos/media, and location in your host app. The native iOS SDK owns photo/video picking, voice-note recording, and location sharing. The location action lets the user either send the current device coordinate or choose another point with a movable MapKit map pin before sending. Chat detail also hides a host SwiftUI tab bar while the pushed conversation is visible.
 
 Media rules in the native iOS SDK:
 
@@ -232,7 +232,7 @@ chat.openChatList(activity)
 chat.openChat(activity, roomId = roomId, title = "Support")
 ```
 
-The host app owns obtaining/refreshing the user token and, for provider-specific flows, calling its own start-chat endpoint to obtain `room_id`. The SDK owns the full chat presentation and close control after either open method is called. See [`android-sdk/README.md`](android-sdk/README.md) for Compose, Java, local-source, and sample instructions.
+The host app owns obtaining/refreshing the user token and, for provider-specific flows, calling its own start-chat endpoint to obtain `room_id`. The SDK owns the full chat presentation and close control after either open method is called. Room selection opens a full-window detail surface that covers host bottom navigation. Location sharing offers the current device position or an API-key-free OpenStreetMap picker for choosing another point. See [`android-sdk/README.md`](android-sdk/README.md) for Compose, Java, local-source, and sample instructions.
 
 ## Flutter Host
 
@@ -330,4 +330,22 @@ npm run smoke
 cd example && npm run typecheck
 ```
 
-`npm run test` uses mocked REST and WebSocket layers. `npm run test:integration` hits the live backend and sends small contract probe messages/uploads.
+`npm run test` uses mocked REST and WebSocket layers. The live integration test persists messages, so it requires an explicitly selected dedicated test room and an opt-in flag:
+
+```sh
+INSTACHAT_TOKEN="<test-user-token>" \
+INSTACHAT_TEST_ROOM_ID="<dedicated-test-room-id>" \
+INSTACHAT_ALLOW_MUTATION_TESTS=true \
+npm run test:integration
+```
+
+The script never falls back to the first room. It tests text and location by default. To test uploads, provide real media fixtures; undersized or malformed placeholders are rejected before reaching the backend:
+
+```sh
+INSTACHAT_TEST_IMAGE_PATH="/absolute/path/to/test-image.jpg" \
+INSTACHAT_TEST_VIDEO_PATH="/absolute/path/to/test-video.mp4" \
+INSTACHAT_TOKEN="<test-user-token>" \
+INSTACHAT_TEST_ROOM_ID="<dedicated-test-room-id>" \
+INSTACHAT_ALLOW_MUTATION_TESTS=true \
+npm run test:integration
+```

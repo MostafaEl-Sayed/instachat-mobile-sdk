@@ -5,11 +5,16 @@ import android.content.Intent
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 object InstaChat {
   @Volatile private var sdk: InstaChatSDK? = null
+  private val sdkState = MutableStateFlow<InstaChatSDK?>(null)
 
   @JvmStatic
+  @Synchronized
   fun initialize(
     context: Context,
     baseUrl: String,
@@ -25,7 +30,10 @@ object InstaChat {
     return InstaChatSDK(
       context.applicationContext,
       InstaChatConfiguration(baseUrl.trimEnd('/'), token.trim(), user, historyLimit, title),
-    ).also { sdk = it }
+    ).also {
+      sdk = it
+      sdkState.value = it
+    }
   }
 
   @JvmStatic
@@ -37,6 +45,17 @@ object InstaChat {
 
   @JvmStatic
   fun current(): InstaChatSDK? = sdk
+
+  @JvmStatic
+  fun observe(): StateFlow<InstaChatSDK?> = sdkState.asStateFlow()
+
+  @JvmStatic
+  @Synchronized
+  fun clear() {
+    sdk?.close()
+    sdk = null
+    sdkState.value = null
+  }
 
   internal fun requireSdk(): InstaChatSDK = checkNotNull(sdk) {
     "Call InstaChat.initialize(context, baseUrl, token, user) before opening chat."

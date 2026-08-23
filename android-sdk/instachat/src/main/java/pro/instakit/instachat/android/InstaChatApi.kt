@@ -221,7 +221,7 @@ internal sealed interface RealtimeEvent {
   data object ConnectionLost : RealtimeEvent
 }
 
-private data class TokenIdentity(val subject: String?, val externalUserId: String?) {
+internal data class TokenIdentity(val subject: String?, val externalUserId: String?) {
   companion object {
     fun from(token: String): TokenIdentity = runCatching {
       val payload = token.split('.')[1].replace('-', '+').replace('_', '/')
@@ -303,7 +303,7 @@ private data class BackendMessage(
   val sender: BackendSender? = null,
 ) {
   fun toDomain(currentUserId: String, identity: TokenIdentity): InstaChatMessage {
-    val mine = senderId == currentUserId || senderId == identity.subject || senderId == identity.externalUserId
+    val resolvedSenderId = resolveSenderId(senderId, currentUserId, identity)
     val messageType = when (type) {
       "image" -> InstaChatMessageType.IMAGE
       "file" -> InstaChatMessageType.FILE
@@ -311,12 +311,19 @@ private data class BackendMessage(
       else -> InstaChatMessageType.TEXT
     }
     return InstaChatMessage(
-      id, roomId, if (mine) currentUserId else senderId ?: "provider", sender?.displayName,
+      id, roomId, resolvedSenderId, sender?.displayName,
       content, messageType, parseInstant(createdAt) ?: Instant.now(), attachments?.firstOrNull()?.toDomain(),
       if (messageType == InstaChatMessageType.LOCATION) runCatching { Gson().fromJson(content, InstaChatLocation::class.java) }.getOrNull() else null,
     )
   }
 }
+
+internal fun resolveSenderId(senderId: String?, currentUserId: String, identity: TokenIdentity): String =
+  if (senderId == currentUserId || senderId == identity.subject || senderId == identity.externalUserId) {
+    currentUserId
+  } else {
+    senderId ?: "participant"
+  }
 
 private data class BackendSender(@SerializedName("display_name") val displayName: String? = null)
 

@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "pro.instakit"
-version = "0.3.3"
+version = "0.3.4"
 
 android {
   namespace = "pro.instakit.instachat.android"
@@ -52,6 +52,7 @@ dependencies {
   implementation("androidx.media3:media3-exoplayer:1.5.0")
   implementation("androidx.media3:media3-datasource:1.5.0")
   implementation("androidx.media3:media3-ui:1.5.0")
+  implementation("org.osmdroid:osmdroid-android:6.1.20")
 
   testImplementation("junit:junit:4.13.2")
   testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")

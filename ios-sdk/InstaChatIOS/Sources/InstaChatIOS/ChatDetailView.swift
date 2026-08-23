@@ -29,6 +29,8 @@ struct ChatDetailView: View {
   #if os(iOS)
   @StateObject private var voiceRecorder = VoiceNoteRecorder()
   @State private var mediaPickerMode: MediaPickerMode?
+  @State private var isLocationOptionsPresented = false
+  @State private var isLocationPickerPresented = false
   #endif
   var room: InstaChatRoom
   var onClose: (() -> Void)?
@@ -42,6 +44,7 @@ struct ChatDetailView: View {
     .navigationTitle(room.title)
     #if os(iOS)
     .navigationBarTitleDisplayMode(.inline)
+    .toolbar(.hidden, for: .tabBar)
     #endif
     .toolbar {
       ToolbarItem(placement: .principal) {
@@ -81,6 +84,33 @@ struct ChatDetailView: View {
       handlePickedMedia(item)
     }
     #if os(iOS)
+    .confirmationDialog("Share Location", isPresented: $isLocationOptionsPresented, titleVisibility: .visible) {
+      Button("Send Current Location") {
+        Task {
+          await sendCurrentLocation()
+        }
+      }
+      Button("Choose on Map") {
+        isLocationPickerPresented = true
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("Send where you are now or move the map pin to another location.")
+    }
+    .sheet(isPresented: $isLocationPickerPresented) {
+      MapLocationPickerView(
+        locationProvider: currentLocationProvider,
+        onSend: { location in
+          isLocationPickerPresented = false
+          Task {
+            await store.sendLocation(location, roomID: room.id)
+          }
+        },
+        onCancel: {
+          isLocationPickerPresented = false
+        }
+      )
+    }
     .sheet(item: $mediaPickerMode) { mode in
       MediaPickerSheet(
         mode: mode,
@@ -277,9 +307,13 @@ struct ChatDetailView: View {
     HStack(spacing: 10) {
       Button {
         isAttachmentPanelVisible = false
+        #if os(iOS)
+        isLocationOptionsPresented = true
+        #else
         Task {
           await sendCurrentLocation()
         }
+        #endif
       } label: {
         AttachmentPanelItem(title: "Location", systemImage: "location.fill")
       }

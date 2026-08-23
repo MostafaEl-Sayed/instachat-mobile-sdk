@@ -25,6 +25,13 @@ final class CurrentLocationProvider: NSObject, ObservableObject {
     )
   }
 
+  func selectedLocation(latitude: Double, longitude: Double) async -> InstaChatLocation {
+    let location = CLLocation(latitude: latitude, longitude: longitude)
+    let name = await reverseGeocodedName(for: location)
+
+    return makeSelectedMapLocation(latitude: latitude, longitude: longitude, name: name)
+  }
+
   private func requestLocation() async throws -> CLLocation {
     guard CLLocationManager.locationServicesEnabled() else {
       throw CurrentLocationError.servicesDisabled
@@ -86,6 +93,14 @@ final class CurrentLocationProvider: NSObject, ObservableObject {
     self.continuation = nil
     continuation.resume(with: result)
   }
+}
+
+func makeSelectedMapLocation(latitude: Double, longitude: Double, name: String? = nil) -> InstaChatLocation {
+  InstaChatLocation(
+    latitude: min(max(latitude, -90), 90),
+    longitude: min(max(longitude, -180), 180),
+    name: name ?? "Selected location"
+  )
 }
 
 extension CurrentLocationProvider: CLLocationManagerDelegate {

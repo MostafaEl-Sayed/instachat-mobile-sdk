@@ -193,6 +193,22 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(decoded.name, "Cairo")
   }
 
+  func testMapSelectionKeepsTheConfirmedCoordinate() {
+    let location = makeSelectedMapLocation(latitude: 30.0444, longitude: 31.2357)
+
+    XCTAssertEqual(location.latitude, 30.0444)
+    XCTAssertEqual(location.longitude, 31.2357)
+    XCTAssertEqual(location.name, "Selected location")
+  }
+
+  func testMapSelectionClampsCoordinatesToBackendSafeRanges() {
+    let location = makeSelectedMapLocation(latitude: 100, longitude: -200, name: "Pinned place")
+
+    XCTAssertEqual(location.latitude, 90)
+    XCTAssertEqual(location.longitude, -180)
+    XCTAssertEqual(location.name, "Pinned place")
+  }
+
   func testAttachmentTypeFallsBackFromMimeType() {
     XCTAssertEqual(MimeTypeResolver.attachmentType(for: "image/png"), .image)
     XCTAssertEqual(MimeTypeResolver.attachmentType(for: "video/mp4"), .video)

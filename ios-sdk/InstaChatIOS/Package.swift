@@ -11,8 +11,20 @@ let package = Package(
   products: [
     .library(name: "InstaChatIOS", targets: ["InstaChatIOS"])
   ],
+  dependencies: [
+    .package(url: "https://github.com/googlemaps/ios-maps-sdk", from: "9.4.0")
+  ],
   targets: [
-    .target(name: "InstaChatIOS"),
+    .target(
+      name: "InstaChatIOS",
+      dependencies: [
+        .product(
+          name: "GoogleMaps",
+          package: "ios-maps-sdk",
+          condition: .when(platforms: [.iOS])
+        )
+      ]
+    ),
     .testTarget(name: "InstaChatIOSTests", dependencies: ["InstaChatIOS"])
   ]
 )

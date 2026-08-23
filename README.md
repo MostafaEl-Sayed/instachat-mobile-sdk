@@ -90,7 +90,17 @@ export function SupportChat() {
 }
 ```
 
-Add native permissions for microphone, photos/media, and location in your host app. The native iOS SDK owns photo/video picking, voice-note recording, and location sharing. The location action lets the user either send the current device coordinate or choose another point with a movable MapKit map pin before sending. Manual map selection does not require GPS permission. Chat detail also hides and restores the host tab bar while the conversation is visible, including UIKit `UITabBarController` hosts that embed the SDK with `UIHostingController`.
+Add native permissions for microphone, photos/media, and location in your host app. The native iOS SDK owns photo/video picking, voice-note recording, and location sharing. The location action lets the user either send the current device coordinate or choose another point with a movable Google Maps pin before sending. Manual map selection does not require GPS permission.
+
+Before presenting `InstaChatView`, initialize Google Maps once from the host app, typically in the app delegate:
+
+```swift
+import GoogleMaps
+
+GMSServices.provideAPIKey("YOUR_GOOGLE_MAPS_IOS_API_KEY")
+```
+
+The Swift package includes the Google Maps iOS dependency. The API key must have Maps SDK for iOS enabled and be restricted to the host app bundle identifier. Chat detail also hides and restores the host tab bar while the conversation is visible, including UIKit `UITabBarController` hosts that embed the SDK with `UIHostingController`.
 
 Media rules in the native iOS SDK:
 

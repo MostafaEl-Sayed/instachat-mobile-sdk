@@ -1,6 +1,6 @@
 #if os(iOS)
 import CoreLocation
-import MapKit
+import GoogleMaps
 import SwiftUI
 
 struct MapLocationPickerView: View {
@@ -8,10 +8,8 @@ struct MapLocationPickerView: View {
   var onSend: (InstaChatLocation) -> Void
   var onCancel: () -> Void
 
-  @State private var region = MKCoordinateRegion(
-    center: CLLocationCoordinate2D(latitude: 20, longitude: 0),
-    span: MKCoordinateSpan(latitudeDelta: 120, longitudeDelta: 120)
-  )
+  @State private var selectedCoordinate = CLLocationCoordinate2D(latitude: 20, longitude: 0)
+  @State private var zoom: Float = 1.8
   @State private var hasSelection = false
   @State private var isLocating = false
   @State private var isResolving = false
@@ -20,15 +18,12 @@ struct MapLocationPickerView: View {
   var body: some View {
     NavigationStack {
       ZStack {
-        Map(
-          coordinateRegion: Binding(
-            get: { region },
-            set: { newRegion in
-              region = newRegion
-              hasSelection = true
-            }
-          ),
-          interactionModes: .all
+        GoogleMapPickerSurface(
+          coordinate: $selectedCoordinate,
+          zoom: $zoom,
+          onCameraMoved: {
+            hasSelection = true
+          }
         )
         .ignoresSafeArea(edges: .bottom)
 
@@ -59,9 +54,9 @@ struct MapLocationPickerView: View {
             Spacer()
 
             VStack(spacing: 0) {
-              mapZoomButton(systemImage: "plus", factor: 0.55)
+              mapZoomButton(systemImage: "plus", delta: 1)
               Divider().frame(width: 28)
-              mapZoomButton(systemImage: "minus", factor: 1.8)
+              mapZoomButton(systemImage: "minus", delta: -1)
             }
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
           }
@@ -94,12 +89,9 @@ struct MapLocationPickerView: View {
     }
   }
 
-  private func mapZoomButton(systemImage: String, factor: Double) -> some View {
+  private func mapZoomButton(systemImage: String, delta: Float) -> some View {
     Button {
-      region.span = MKCoordinateSpan(
-        latitudeDelta: min(max(region.span.latitudeDelta * factor, 0.002), 160),
-        longitudeDelta: min(max(region.span.longitudeDelta * factor, 0.002), 160)
-      )
+      zoom = min(max(zoom + delta, 1), 21)
       hasSelection = true
     } label: {
       Image(systemName: systemImage)
@@ -119,10 +111,11 @@ struct MapLocationPickerView: View {
 
     do {
       let location = try await locationProvider.currentLocation()
-      region = MKCoordinateRegion(
-        center: CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude),
-        span: MKCoordinateSpan(latitudeDelta: 0.012, longitudeDelta: 0.012)
+      selectedCoordinate = CLLocationCoordinate2D(
+        latitude: location.latitude,
+        longitude: location.longitude
       )
+      zoom = 16
       hasSelection = true
     } catch {
       errorMessage = locationProvider.userFacingMessage(for: error)
@@ -133,7 +126,7 @@ struct MapLocationPickerView: View {
     guard hasSelection else {
       return
     }
-    let coordinate = region.center
+    let coordinate = selectedCoordinate
     isResolving = true
     Task {
       let location = await locationProvider.selectedLocation(
@@ -143,6 +136,77 @@ struct MapLocationPickerView: View {
       isResolving = false
       onSend(location)
     }
+  }
+}
+
+private struct GoogleMapPickerSurface: UIViewRepresentable {
+  @Binding var coordinate: CLLocationCoordinate2D
+  @Binding var zoom: Float
+  var onCameraMoved: () -> Void
+
+  func makeCoordinator() -> Coordinator {
+    Coordinator(parent: self)
+  }
+
+  func makeUIView(context: Context) -> GMSMapView {
+    let options = GMSMapViewOptions()
+    options.camera = GMSCameraPosition(
+      latitude: coordinate.latitude,
+      longitude: coordinate.longitude,
+      zoom: zoom
+    )
+    let mapView = GMSMapView(options: options)
+    mapView.delegate = context.coordinator
+    mapView.settings.compassButton = true
+    mapView.settings.rotateGestures = true
+    mapView.settings.scrollGestures = true
+    mapView.settings.tiltGestures = true
+    mapView.settings.zoomGestures = true
+    mapView.padding = UIEdgeInsets(top: 0, left: 0, bottom: 74, right: 0)
+    mapView.paddingAdjustmentBehavior = .never
+    return mapView
+  }
+
+  func updateUIView(_ mapView: GMSMapView, context: Context) {
+    context.coordinator.parent = self
+    let camera = mapView.camera
+    guard !camera.target.isApproximatelyEqual(to: coordinate) || abs(camera.zoom - zoom) > 0.01 else {
+      return
+    }
+
+    context.coordinator.isApplyingSwiftUIUpdate = true
+    mapView.animate(
+      to: GMSCameraPosition(
+        target: coordinate,
+        zoom: zoom
+      )
+    )
+  }
+
+  final class Coordinator: NSObject, GMSMapViewDelegate {
+    var parent: GoogleMapPickerSurface
+    var isApplyingSwiftUIUpdate = false
+
+    init(parent: GoogleMapPickerSurface) {
+      self.parent = parent
+    }
+
+    func mapView(_ mapView: GMSMapView, idleAt position: GMSCameraPosition) {
+      let wasProgrammaticUpdate = isApplyingSwiftUIUpdate
+      isApplyingSwiftUIUpdate = false
+      parent.coordinate = position.target
+      parent.zoom = position.zoom
+      if !wasProgrammaticUpdate {
+        parent.onCameraMoved()
+      }
+    }
+  }
+}
+
+private extension CLLocationCoordinate2D {
+  func isApproximatelyEqual(to other: CLLocationCoordinate2D) -> Bool {
+    abs(latitude - other.latitude) < 0.000_001 &&
+      abs(longitude - other.longitude) < 0.000_001
   }
 }
 #endif

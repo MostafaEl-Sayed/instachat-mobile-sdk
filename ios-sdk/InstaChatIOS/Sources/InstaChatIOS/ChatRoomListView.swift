@@ -46,18 +46,6 @@ struct ChatRoomListView: View {
         Text(store.configuration.title)
           .font(.headline)
       }
-
-      if let onClose {
-        #if os(iOS)
-        ToolbarItem(placement: .topBarTrailing) {
-          SDKCloseButton(action: onClose)
-        }
-        #else
-        ToolbarItem(placement: .automatic) {
-          SDKCloseButton(action: onClose)
-        }
-        #endif
-      }
     }
     .navigationDestination(for: InstaChatRoom.self) { room in
       ChatDetailView(room: room, onClose: onClose, onProviderProfileTap: onProviderProfileTap)

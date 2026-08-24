@@ -160,6 +160,9 @@ enum InstaChatGoogleMapsRuntime {
 
 public struct InstaChatView: View {
   @StateObject private var store: InstaChatStore
+#if os(iOS)
+  @Environment(\.scenePhase) private var scenePhase
+#endif
   private let onClose: (() -> Void)?
   private let onProviderProfileTap: ((InstaChatRoom) -> Void)?
 
@@ -192,5 +195,15 @@ public struct InstaChatView: View {
         await store.loadRooms()
       }
     }
+#if os(iOS)
+    .onChange(of: scenePhase) { phase in
+      guard phase == .active else {
+        return
+      }
+      Task {
+        await store.refreshAfterForeground()
+      }
+    }
+#endif
   }
 }

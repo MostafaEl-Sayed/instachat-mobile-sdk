@@ -1163,6 +1163,23 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(StubMediaURLProtocol.requestCount, 0, "Outgoing image reconciliation must not redownload media")
   }
 
+  @MainActor
+  func testForegroundRefreshRenewsRealtimeAndReconcilesOpenRoom() async {
+    let client = StubInstaChatClient()
+    let store = InstaChatStore(
+      configuration: Self.testConfiguration(),
+      client: client,
+      pendingStore: Self.temporaryPendingStore()
+    )
+    store.setActiveRoom("room-active")
+
+    await store.refreshAfterForeground()
+
+    XCTAssertEqual(client.refreshRealtimeCallCount, 1)
+    XCTAssertEqual(client.getRoomsCallCount, 1)
+    XCTAssertEqual(client.getMessagesRoomIDs, ["room-active"])
+  }
+
   func testMediaRetryPolicyIncludesConnectionFailures() {
     let transientConnectionErrors: [URLError.Code] = [
       .timedOut,
@@ -1351,11 +1368,18 @@ private final class StubInstaChatClient: InstaChatClientProtocol, @unchecked Sen
   private(set) var sendTextCallCount = 0
   private(set) var uploadCallCount = 0
   private(set) var sendAttachmentCallCount = 0
+  private(set) var refreshRealtimeCallCount = 0
+  private(set) var getRoomsCallCount = 0
+  private(set) var getMessagesRoomIDs: [String] = []
 
-  func getRooms() async throws -> [InstaChatRoom] { [] }
+  func getRooms() async throws -> [InstaChatRoom] {
+    getRoomsCallCount += 1
+    return []
+  }
 
   func getMessages(roomID: String, limit: Int?, cursor: String?) async throws -> InstaChatMessagesPage {
-    InstaChatMessagesPage(messages: [], nextCursor: nil, hasMore: false)
+    getMessagesRoomIDs.append(roomID)
+    return InstaChatMessagesPage(messages: [], nextCursor: nil, hasMore: false)
   }
 
   func uploadAttachment(fileURL: URL, roomID: String, contentType: String?) async throws -> InstaChatAttachment {
@@ -1390,6 +1414,10 @@ private final class StubInstaChatClient: InstaChatClientProtocol, @unchecked Sen
     AsyncStream { continuation in
       continuation.finish()
     }
+  }
+
+  func refreshRealtimeConnection() {
+    refreshRealtimeCallCount += 1
   }
 
   func disconnect() {}

@@ -32,7 +32,12 @@ protocol InstaChatClientProtocol: AnyObject, Sendable {
   func sendAttachment(_ attachment: InstaChatAttachment, text: String, roomID: String) async throws
   func sendTyping(roomID: String, isTyping: Bool) async throws
   func realtimeEvents() -> AsyncStream<InstaChatRealtimeEvent>
+  func refreshRealtimeConnection()
   func disconnect()
+}
+
+extension InstaChatClientProtocol {
+  func refreshRealtimeConnection() {}
 }
 
 public final class InstaChatClient: NSObject, InstaChatClientProtocol, URLSessionWebSocketDelegate, @unchecked Sendable {
@@ -156,6 +161,15 @@ public final class InstaChatClient: NSObject, InstaChatClientProtocol, URLSessio
     let socketSession = webSocketSession
     webSocketSession = nil
     socketSession?.invalidateAndCancel()
+  }
+
+  public func refreshRealtimeConnection() {
+    guard shouldMaintainRealtimeConnection, messageContinuation != nil else {
+      return
+    }
+    resetWebSocket()
+    connectWebSocketIfNeeded()
+    receiveNextWebSocketMessage()
   }
 
   private func sendMessage(content: String, type: InstaChatMessageType, roomID: String, attachmentIDs: [String]) async throws {

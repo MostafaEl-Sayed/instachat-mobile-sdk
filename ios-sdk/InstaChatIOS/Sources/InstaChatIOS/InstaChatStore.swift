@@ -50,6 +50,15 @@ final class InstaChatStore: ObservableObject {
     }
   }
 
+  func refreshAfterForeground() async {
+    start()
+    client.refreshRealtimeConnection()
+    await loadRooms()
+    if let activeRoomID {
+      await loadMessages(roomID: activeRoomID)
+    }
+  }
+
   func loadRooms() async {
     isLoadingRooms = true
     errorMessage = nil

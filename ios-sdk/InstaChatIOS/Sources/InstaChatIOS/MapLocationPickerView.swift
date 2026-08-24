@@ -16,6 +16,7 @@ struct MapLocationPickerView: View {
   @State private var isLocating = false
   @State private var isResolving = false
   @State private var errorMessage: String?
+  @StateObject private var searchModel = LocationSearchModel()
 
   var body: some View {
     NavigationStack {
@@ -61,6 +62,12 @@ struct MapLocationPickerView: View {
       }
       .navigationTitle("Choose Location")
       .navigationBarTitleDisplayMode(.inline)
+      .searchable(text: $searchModel.query, prompt: "Search for a place")
+      .overlay(alignment: .top) {
+        if !searchModel.results.isEmpty {
+          searchResults
+        }
+      }
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel", action: onCancel)
@@ -83,6 +90,43 @@ struct MapLocationPickerView: View {
         Text(errorMessage ?? "Try again or choose a location manually on the map.")
       }
     }
+  }
+
+  private var searchResults: some View {
+    ScrollView {
+      LazyVStack(spacing: 0) {
+        ForEach(searchModel.results) { result in
+          Button {
+            Task {
+              await selectSearchResult(result)
+            }
+          } label: {
+            VStack(alignment: .leading, spacing: 3) {
+              Text(result.title)
+                .font(.body.weight(.medium))
+                .foregroundStyle(.primary)
+              if !result.subtitle.isEmpty {
+                Text(result.subtitle)
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel([result.title, result.subtitle].filter { !$0.isEmpty }.joined(separator: ", "))
+          Divider().padding(.leading, 16)
+        }
+      }
+    }
+    .frame(maxHeight: 280)
+    .background(.regularMaterial)
+    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    .shadow(color: .black.opacity(0.14), radius: 10, y: 4)
+    .padding(.horizontal, 12)
+    .padding(.top, 8)
   }
 
   @ViewBuilder
@@ -156,6 +200,70 @@ struct MapLocationPickerView: View {
       onSend(location)
     }
   }
+
+  @MainActor
+  private func selectSearchResult(_ result: LocationSearchResult) async {
+    do {
+      let selection = try await searchModel.resolve(result)
+      selectedCoordinate = selection.coordinate
+      zoom = 16
+      hasSelection = true
+      searchModel.clear()
+    } catch {
+      errorMessage = "That place could not be located. Try another search."
+    }
+  }
+}
+
+@MainActor
+private final class LocationSearchModel: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
+  @Published var query = "" {
+    didSet {
+      let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
+      if normalized.isEmpty {
+        results = []
+      }
+      completer.queryFragment = normalized
+    }
+  }
+  @Published private(set) var results: [LocationSearchResult] = []
+
+  private let completer = MKLocalSearchCompleter()
+
+  override init() {
+    super.init()
+    completer.resultTypes = [.address, .pointOfInterest]
+    completer.delegate = self
+  }
+
+  func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
+    results = completer.results.prefix(8).map(LocationSearchResult.init)
+  }
+
+  func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
+    results = []
+  }
+
+  func resolve(_ result: LocationSearchResult) async throws -> MKMapItem {
+    let request = MKLocalSearch.Request(completion: result.completion)
+    guard let item = try await MKLocalSearch(request: request).start().mapItems.first else {
+      throw InstaChatError.invalidLocationPayload
+    }
+    return item
+  }
+
+  func clear() {
+    query = ""
+    results = []
+  }
+}
+
+private struct LocationSearchResult: Identifiable {
+  let completion: MKLocalSearchCompletion
+
+  var id: String { "\(title)|\(subtitle)" }
+  var title: String { completion.title }
+  var subtitle: String { completion.subtitle }
 }
 
 private struct GoogleMapPickerSurface: UIViewRepresentable {

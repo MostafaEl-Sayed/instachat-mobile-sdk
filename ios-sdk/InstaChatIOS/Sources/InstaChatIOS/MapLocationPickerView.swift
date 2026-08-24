@@ -205,7 +205,7 @@ struct MapLocationPickerView: View {
   private func selectSearchResult(_ result: LocationSearchResult) async {
     do {
       let selection = try await searchModel.resolve(result)
-      selectedCoordinate = selection.coordinate
+      selectedCoordinate = selection.placemark.coordinate
       zoom = 16
       hasSelection = true
       searchModel.clear()

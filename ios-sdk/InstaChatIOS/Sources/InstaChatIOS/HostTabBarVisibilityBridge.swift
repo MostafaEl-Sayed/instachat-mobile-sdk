@@ -31,7 +31,9 @@ struct HostTabBarVisibilityBridge: UIViewControllerRepresentable {
 final class HostTabBarVisibilityViewController: UIViewController {
   private var shouldHideTabBar: Bool
   private weak var managedTabBarController: UITabBarController?
+  private weak var managedLayoutController: UIViewController?
   private var originalVisibility: Bool?
+  private var originalAdditionalSafeAreaInsets: UIEdgeInsets?
   private var appliedHiddenState: Bool?
   private let animationDuration: TimeInterval = 0.25
 
@@ -74,10 +76,14 @@ final class HostTabBarVisibilityViewController: UIViewController {
     }
     transitionTabBar(
       tabBarController,
+      layoutController: managedLayoutController,
+      additionalSafeAreaInsets: originalAdditionalSafeAreaInsets,
       hidden: originalVisibility,
       animated: true
     )
     self.originalVisibility = nil
+    self.originalAdditionalSafeAreaInsets = nil
+    managedLayoutController = nil
     managedTabBarController = nil
     appliedHiddenState = nil
   }
@@ -97,22 +103,42 @@ final class HostTabBarVisibilityViewController: UIViewController {
       restoreTabBarVisibility()
       managedTabBarController = tabBarController
       originalVisibility = tabBarController.tabBar.isHidden
+      managedLayoutController = tabBarController.selectedViewController
+      originalAdditionalSafeAreaInsets = managedLayoutController?.additionalSafeAreaInsets
     }
 
     guard appliedHiddenState != shouldHideTabBar else {
       return
     }
 
+    let targetInsets = shouldHideTabBar
+      ? hiddenTabBarSafeAreaInsets(for: tabBarController)
+      : originalAdditionalSafeAreaInsets
     transitionTabBar(
       tabBarController,
+      layoutController: managedLayoutController,
+      additionalSafeAreaInsets: targetInsets,
       hidden: shouldHideTabBar,
       animated: originalVisibility == false || appliedHiddenState != nil
     )
     appliedHiddenState = shouldHideTabBar
   }
 
+  private func hiddenTabBarSafeAreaInsets(for tabBarController: UITabBarController) -> UIEdgeInsets? {
+    guard let originalAdditionalSafeAreaInsets else {
+      return nil
+    }
+    let deviceBottomInset = tabBarController.view.window?.safeAreaInsets.bottom ?? 0
+    let reservedContentHeight = max(0, tabBarController.tabBar.bounds.height - deviceBottomInset)
+    var adjustedInsets = originalAdditionalSafeAreaInsets
+    adjustedInsets.bottom -= reservedContentHeight
+    return adjustedInsets
+  }
+
   private func transitionTabBar(
     _ tabBarController: UITabBarController,
+    layoutController: UIViewController?,
+    additionalSafeAreaInsets: UIEdgeInsets?,
     hidden: Bool,
     animated: Bool
   ) {
@@ -124,12 +150,16 @@ final class HostTabBarVisibilityViewController: UIViewController {
       tabBar.transform = CGAffineTransform(translationX: 0, y: max(tabBar.bounds.height, 1))
       tabBar.alpha = 0
     }
+    if let additionalSafeAreaInsets {
+      layoutController?.additionalSafeAreaInsets = additionalSafeAreaInsets
+    }
     let animations = {
       tabBar.transform = hidden
         ? CGAffineTransform(translationX: 0, y: max(tabBar.bounds.height, 1))
         : .identity
       tabBar.alpha = hidden ? 0 : 1
       tabBarController.view.layoutIfNeeded()
+      layoutController?.view.layoutIfNeeded()
     }
     let completion: (Bool) -> Void = { _ in
       tabBar.isHidden = hidden

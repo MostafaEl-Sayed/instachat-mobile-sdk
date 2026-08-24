@@ -44,11 +44,6 @@ struct ChatDetailView: View {
     .navigationTitle(room.title)
     #if os(iOS)
     .navigationBarTitleDisplayMode(.inline)
-    .toolbar(.hidden, for: .tabBar)
-    .background {
-      HostTabBarVisibilityBridge(isHidden: true)
-        .frame(width: 0, height: 0)
-    }
     #endif
     .toolbar {
       ToolbarItem(placement: .principal) {

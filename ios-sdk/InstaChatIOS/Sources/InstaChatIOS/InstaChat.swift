@@ -160,6 +160,7 @@ enum InstaChatGoogleMapsRuntime {
 
 public struct InstaChatView: View {
   @StateObject private var store: InstaChatStore
+  @State private var navigationPath = NavigationPath()
 #if os(iOS)
   @Environment(\.scenePhase) private var scenePhase
 #endif
@@ -180,7 +181,7 @@ public struct InstaChatView: View {
   }
 
   public var body: some View {
-    NavigationStack {
+    NavigationStack(path: $navigationPath) {
       if let room = store.configuration.initialRoom {
         ChatDetailView(room: room, onClose: onClose, onProviderProfileTap: onProviderProfileTap)
           .environmentObject(store)
@@ -189,6 +190,14 @@ public struct InstaChatView: View {
           .environmentObject(store)
       }
     }
+#if os(iOS)
+    .background {
+      HostTabBarVisibilityBridge(
+        isHidden: store.configuration.initialRoom != nil || !navigationPath.isEmpty
+      )
+      .frame(width: 0, height: 0)
+    }
+#endif
     .task {
       store.start()
       if store.configuration.initialRoom == nil {

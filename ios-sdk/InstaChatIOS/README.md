@@ -30,7 +30,8 @@ struct SupportChatScreen: View {
       baseURL: baseURL,
       token: token,
       user: InstaChatUser(id: "user-1", name: "Mostafa"),
-      googleMapsAPIKey: googleMapsAPIKey
+      googleMapsAPIKey: googleMapsAPIKey,
+      primaryColor: InstaChatColor(rgb: 0xA68534)
     )
 
     sdk.chatListView(
@@ -42,6 +43,9 @@ struct SupportChatScreen: View {
   }
 }
 ```
+
+`primaryColor` themes outgoing message bubbles and the SDK's send, voice,
+attachment, link, and map actions. Omit it to keep the default blue (`#0A84FF`).
 
 Open a specific room directly:
 
@@ -72,7 +76,8 @@ let sdk = InstaChat.initialize(
   baseURL: URL(string: "https://instachat.instakit.pro")!,
   token: token,
   user: InstaChatUser(id: "user-1", name: "Mostafa"),
-  googleMapsAPIKey: googleMapsAPIKey
+  googleMapsAPIKey: googleMapsAPIKey,
+  primaryColor: InstaChatColor(rgb: 0xA68534)
 )
 
 sdk.presentChatList(from: viewController)

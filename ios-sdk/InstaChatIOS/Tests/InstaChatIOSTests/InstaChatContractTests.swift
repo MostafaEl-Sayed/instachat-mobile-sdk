@@ -3,10 +3,12 @@ import XCTest
 
 final class InstaChatContractTests: XCTestCase {
   func testConfigurationCanOpenSpecificRoomFromInitializedSDK() {
+    let brandColor = InstaChatColor(rgb: 0xA68534)
     let sdk = InstaChat.initialize(
       baseURL: URL(string: "https://instachat.instakit.pro")!,
       token: "token",
-      user: InstaChatUser(id: "user-1", name: "Mostafa")
+      user: InstaChatUser(id: "user-1", name: "Mostafa"),
+      primaryColor: brandColor
     )
 
     let roomConfiguration = sdk.configuration.openingRoom(id: "room-1", title: "Support")
@@ -15,6 +17,15 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(roomConfiguration.roomID, "room-1")
     XCTAssertEqual(roomConfiguration.initialRoom?.id, "room-1")
     XCTAssertEqual(roomConfiguration.initialRoom?.title, "Support")
+    XCTAssertEqual(sdk.configuration.primaryColor, brandColor)
+    XCTAssertEqual(roomConfiguration.primaryColor, brandColor)
+  }
+
+  func testDefaultPrimaryColorPreservesExistingAppearance() {
+    let configuration = Self.testConfiguration()
+
+    XCTAssertEqual(configuration.primaryColor, .defaultPrimary)
+    XCTAssertEqual(configuration.primaryColor, InstaChatColor(rgb: 0x0A84FF))
   }
 
   func testSDKConfigurationInitializerPreservesInitialRoom() {

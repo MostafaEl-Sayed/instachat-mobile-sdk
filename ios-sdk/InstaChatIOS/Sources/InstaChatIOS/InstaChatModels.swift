@@ -9,6 +9,7 @@ public struct InstaChatConfiguration: Sendable {
   public var historyLimit: Int
   public var title: String
   public var googleMapsAPIKey: String?
+  public var primaryColor: InstaChatColor
 
   public init(
     baseURL: URL,
@@ -18,7 +19,8 @@ public struct InstaChatConfiguration: Sendable {
     roomTitle: String? = nil,
     historyLimit: Int = 25,
     title: String = "Messages",
-    googleMapsAPIKey: String? = nil
+    googleMapsAPIKey: String? = nil,
+    primaryColor: InstaChatColor = .defaultPrimary
   ) {
     self.baseURL = baseURL
     self.token = token
@@ -28,6 +30,7 @@ public struct InstaChatConfiguration: Sendable {
     self.historyLimit = historyLimit
     self.title = title
     self.googleMapsAPIKey = googleMapsAPIKey?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    self.primaryColor = primaryColor
   }
 
   public func openingRoom(id roomID: String, title roomTitle: String? = nil) -> InstaChatConfiguration {
@@ -39,7 +42,8 @@ public struct InstaChatConfiguration: Sendable {
       roomTitle: roomTitle,
       historyLimit: historyLimit,
       title: title,
-      googleMapsAPIKey: googleMapsAPIKey
+      googleMapsAPIKey: googleMapsAPIKey,
+      primaryColor: primaryColor
     )
   }
 
@@ -57,6 +61,31 @@ public struct InstaChatConfiguration: Sendable {
 
     return InstaChatRoom(id: roomID, title: roomTitle ?? "Chat")
   }
+}
+
+public struct InstaChatColor: Hashable, Sendable {
+  public let red: Double
+  public let green: Double
+  public let blue: Double
+  public let alpha: Double
+
+  public init(red: Double, green: Double, blue: Double, alpha: Double = 1) {
+    self.red = min(max(red, 0), 1)
+    self.green = min(max(green, 0), 1)
+    self.blue = min(max(blue, 0), 1)
+    self.alpha = min(max(alpha, 0), 1)
+  }
+
+  public init(rgb: UInt32, alpha: Double = 1) {
+    self.init(
+      red: Double((rgb >> 16) & 0xFF) / 255,
+      green: Double((rgb >> 8) & 0xFF) / 255,
+      blue: Double(rgb & 0xFF) / 255,
+      alpha: alpha
+    )
+  }
+
+  public static let defaultPrimary = InstaChatColor(rgb: 0x0A84FF)
 }
 
 enum InstaChatLocationMapProvider: Equatable, Sendable {

@@ -12,7 +12,8 @@ public enum InstaChat {
     user: InstaChatUser,
     historyLimit: Int = 25,
     title: String = "Messages",
-    googleMapsAPIKey: String? = nil
+    googleMapsAPIKey: String? = nil,
+    primaryColor: InstaChatColor = .defaultPrimary
   ) -> InstaChatSDK {
     InstaChatSDK(
       baseURL: baseURL,
@@ -20,7 +21,8 @@ public enum InstaChat {
       user: user,
       historyLimit: historyLimit,
       title: title,
-      googleMapsAPIKey: googleMapsAPIKey
+      googleMapsAPIKey: googleMapsAPIKey,
+      primaryColor: primaryColor
     )
   }
 
@@ -46,13 +48,15 @@ public enum InstaChat {
     token: String,
     user: InstaChatUser,
     roomID: String? = nil,
-    googleMapsAPIKey: String? = nil
+    googleMapsAPIKey: String? = nil,
+    primaryColor: InstaChatColor = .defaultPrimary
   ) {
     let sdk = initialize(
       baseURL: baseURL,
       token: token,
       user: user,
-      googleMapsAPIKey: googleMapsAPIKey
+      googleMapsAPIKey: googleMapsAPIKey,
+      primaryColor: primaryColor
     )
     if let roomID {
       sdk.presentChat(from: viewController, roomID: roomID)
@@ -72,7 +76,8 @@ public struct InstaChatSDK: Sendable {
     user: InstaChatUser,
     historyLimit: Int = 25,
     title: String = "Messages",
-    googleMapsAPIKey: String? = nil
+    googleMapsAPIKey: String? = nil,
+    primaryColor: InstaChatColor = .defaultPrimary
   ) {
     self.configuration = InstaChatConfiguration(
       baseURL: baseURL,
@@ -80,7 +85,8 @@ public struct InstaChatSDK: Sendable {
       user: user,
       historyLimit: historyLimit,
       title: title,
-      googleMapsAPIKey: googleMapsAPIKey
+      googleMapsAPIKey: googleMapsAPIKey,
+      primaryColor: primaryColor
     )
   }
 
@@ -187,6 +193,7 @@ public struct InstaChatView: View {
           .environmentObject(store)
       }
     }
+    .tint(store.configuration.primaryColor.swiftUIColor)
 #if os(iOS)
     .background {
       HostTabBarVisibilityBridge(
@@ -208,5 +215,11 @@ public struct InstaChatView: View {
       }
     }
 #endif
+  }
+}
+
+private extension InstaChatColor {
+  var swiftUIColor: Color {
+    Color(red: red, green: green, blue: blue, opacity: alpha)
   }
 }

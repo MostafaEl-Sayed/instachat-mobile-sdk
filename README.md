@@ -31,7 +31,8 @@ let sdk = InstaChat.initialize(
   baseURL: URL(string: "https://instachat.instakit.pro")!,
   token: token,
   user: InstaChatUser(id: "user-1", name: "Mostafa"),
-  googleMapsAPIKey: googleMapsAPIKey
+  googleMapsAPIKey: googleMapsAPIKey,
+  primaryColor: InstaChatColor(rgb: 0xA68534)
 )
 
 sdk.chatListView()

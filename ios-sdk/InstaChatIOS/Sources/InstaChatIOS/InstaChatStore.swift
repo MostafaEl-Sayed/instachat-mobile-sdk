@@ -15,6 +15,7 @@ final class InstaChatStore: ObservableObject {
   private let pendingStore: PendingOutgoingMessageStore
   private var pendingOutgoingByMessageID: [String: PendingOutgoingMessage] = [:]
   private var realtimeTask: Task<Void, Never>?
+  private var isRealtimeListening = false
   private var activeRoomID: String?
 
   init(
@@ -34,9 +35,10 @@ final class InstaChatStore: ObservableObject {
   }
 
   func start() {
-    guard realtimeTask == nil else {
+    guard !isRealtimeListening else {
       return
     }
+    isRealtimeListening = true
 
     let realtimeClient = client
     realtimeTask = Task { [weak self, realtimeClient] in
@@ -47,6 +49,12 @@ final class InstaChatStore: ObservableObject {
         }
         self.applyRealtimeEvent(event)
       }
+
+      guard let self else {
+        return
+      }
+      self.isRealtimeListening = false
+      self.realtimeTask = nil
     }
   }
 

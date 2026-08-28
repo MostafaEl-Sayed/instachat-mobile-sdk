@@ -1180,6 +1180,23 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(client.getMessagesRoomIDs, ["room-active"])
   }
 
+  @MainActor
+  func testRealtimeListenerCanRestartAfterItsStreamEnds() async {
+    let client = StubInstaChatClient()
+    let store = InstaChatStore(
+      configuration: Self.testConfiguration(),
+      client: client,
+      pendingStore: Self.temporaryPendingStore()
+    )
+
+    store.start()
+    try? await Task.sleep(nanoseconds: 10_000_000)
+    store.start()
+    try? await Task.sleep(nanoseconds: 10_000_000)
+
+    XCTAssertEqual(client.realtimeEventsCallCount, 2)
+  }
+
   func testMediaRetryPolicyIncludesConnectionFailures() {
     let transientConnectionErrors: [URLError.Code] = [
       .timedOut,
@@ -1369,6 +1386,7 @@ private final class StubInstaChatClient: InstaChatClientProtocol, @unchecked Sen
   private(set) var uploadCallCount = 0
   private(set) var sendAttachmentCallCount = 0
   private(set) var refreshRealtimeCallCount = 0
+  private(set) var realtimeEventsCallCount = 0
   private(set) var getRoomsCallCount = 0
   private(set) var getMessagesRoomIDs: [String] = []
 
@@ -1411,7 +1429,8 @@ private final class StubInstaChatClient: InstaChatClientProtocol, @unchecked Sen
   func sendTyping(roomID: String, isTyping: Bool) async throws {}
 
   func realtimeEvents() -> AsyncStream<InstaChatRealtimeEvent> {
-    AsyncStream { continuation in
+    realtimeEventsCallCount += 1
+    return AsyncStream { continuation in
       continuation.finish()
     }
   }

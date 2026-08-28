@@ -14,6 +14,7 @@ import AppKit
 
 struct ChatDetailView: View {
   @EnvironmentObject private var store: InstaChatStore
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @State private var draft = ""
   @State private var didLoad = false
   @State private var selectedPhoto: PhotosPickerItem?
@@ -301,48 +302,70 @@ struct ChatDetailView: View {
   }
 
   private var attachmentPanel: some View {
-    HStack(spacing: 10) {
-      Button {
-        isAttachmentPanelVisible = false
-        #if os(iOS)
-        isLocationPickerPresented = true
-        #else
-        Task {
-          await sendCurrentLocation()
+    Group {
+      if dynamicTypeSize.isAccessibilitySize {
+        ScrollView(.vertical) {
+          VStack(spacing: 8) {
+            attachmentButtons(fillWidth: true)
+          }
+          .padding(8)
         }
-        #endif
-      } label: {
-        AttachmentPanelItem(title: "Location", systemImage: "location.fill")
+        .frame(maxHeight: 220)
+        .scrollIndicators(.visible)
+      } else {
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack(spacing: 10) {
+            attachmentButtons(fillWidth: false)
+          }
+          .padding(8)
+        }
       }
+    }
+    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+  }
 
+  @ViewBuilder
+  private func attachmentButtons(fillWidth: Bool) -> some View {
+    ForEach(AttachmentAction.allCases) { action in
+      Button {
+        performAttachmentAction(action)
+      } label: {
+        AttachmentPanelItem(
+          title: action.title,
+          systemImage: action.systemImage,
+          fillWidth: fillWidth
+        )
+      }
+      .buttonStyle(.plain)
+      .frame(maxWidth: fillWidth ? .infinity : nil, alignment: .leading)
+      .accessibilityLabel(action.accessibilityLabel)
+    }
+  }
+
+  private func performAttachmentAction(_ action: AttachmentAction) {
+    switch action {
+    case .location:
+      isAttachmentPanelVisible = false
       #if os(iOS)
-        Button {
-          mediaPickerMode = .photo
-        } label: {
-          AttachmentPanelItem(title: "Photo", systemImage: "photo.fill")
-        }
-
-        Button {
-          mediaPickerMode = .video
-        } label: {
-          AttachmentPanelItem(title: "Video", systemImage: "video.fill")
-        }
+      isLocationPickerPresented = true
       #else
-        Button {
-          isPhotoPickerPresented = true
-        } label: {
-          AttachmentPanelItem(title: "Photo", systemImage: "photo.fill")
-        }
-
-        Button {
-          isVideoPickerPresented = true
-        } label: {
-          AttachmentPanelItem(title: "Video", systemImage: "video.fill")
-        }
+      Task {
+        await sendCurrentLocation()
+      }
+      #endif
+    case .photo:
+      #if os(iOS)
+      mediaPickerMode = .photo
+      #else
+      isPhotoPickerPresented = true
+      #endif
+    case .video:
+      #if os(iOS)
+      mediaPickerMode = .video
+      #else
+      isVideoPickerPresented = true
       #endif
     }
-    .padding(8)
-    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
   }
 
   #if os(iOS)
@@ -767,17 +790,55 @@ private struct MediaPickerSheet: UIViewControllerRepresentable {
 }
 #endif
 
+private enum AttachmentAction: String, CaseIterable, Identifiable {
+  case location
+  case photo
+  case video
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .location: "Location"
+    case .photo: "Photo"
+    case .video: "Video"
+    }
+  }
+
+  var systemImage: String {
+    switch self {
+    case .location: "location.fill"
+    case .photo: "photo.fill"
+    case .video: "video.fill"
+    }
+  }
+
+  var accessibilityLabel: String {
+    switch self {
+    case .location: "Share a location"
+    case .photo: "Choose photos"
+    case .video: "Choose a video"
+    }
+  }
+}
+
 private struct AttachmentPanelItem: View {
   var title: String
   var systemImage: String
+  var fillWidth: Bool
 
   var body: some View {
     Label(title, systemImage: systemImage)
       .font(.footnote.weight(.semibold))
       .foregroundStyle(.primary)
+      .frame(maxWidth: fillWidth ? .infinity : nil, alignment: .leading)
       .padding(.horizontal, 11)
-      .padding(.vertical, 9)
-      .background(Color.gray.opacity(0.12), in: Capsule())
+      .padding(.vertical, fillWidth ? 11 : 9)
+      .contentShape(Rectangle())
+      .background(
+        Color.gray.opacity(0.12),
+        in: RoundedRectangle(cornerRadius: fillWidth ? 12 : 18, style: .continuous)
+      )
   }
 }
 

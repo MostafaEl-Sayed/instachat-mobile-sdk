@@ -221,9 +221,10 @@ public final class InstaChatClient: NSObject, InstaChatClientProtocol, URLSessio
       return
     }
 
-    guard let webSocketSession else {
-      return
+    if webSocketSession == nil {
+      webSocketSession = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
     }
+    guard let webSocketSession else { return }
     let task = webSocketSession.webSocketTask(with: url)
     webSocketTask = task
     setWebSocketOpen(false)

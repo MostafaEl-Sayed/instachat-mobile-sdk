@@ -161,9 +161,6 @@ enum InstaChatGoogleMapsRuntime {
 public struct InstaChatView: View {
   @StateObject private var store: InstaChatStore
   @State private var navigationPath = NavigationPath()
-#if os(iOS)
-  @Environment(\.scenePhase) private var scenePhase
-#endif
   private let onClose: (() -> Void)?
   private let onProviderProfileTap: ((InstaChatRoom) -> Void)?
 
@@ -205,10 +202,7 @@ public struct InstaChatView: View {
       }
     }
 #if os(iOS)
-    .onChange(of: scenePhase) { phase in
-      guard phase == .active else {
-        return
-      }
+    .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
       Task {
         await store.refreshAfterForeground()
       }

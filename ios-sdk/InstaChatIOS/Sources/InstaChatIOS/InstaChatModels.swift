@@ -10,6 +10,7 @@ public struct InstaChatConfiguration: Sendable {
   public var title: String
   public var googleMapsAPIKey: String?
   public var primaryColor: InstaChatColor
+  public var language: InstaChatLanguage
 
   public init(
     baseURL: URL,
@@ -18,19 +19,22 @@ public struct InstaChatConfiguration: Sendable {
     roomID: String? = nil,
     roomTitle: String? = nil,
     historyLimit: Int = 25,
-    title: String = "Messages",
+    title: String? = nil,
     googleMapsAPIKey: String? = nil,
-    primaryColor: InstaChatColor = .defaultPrimary
+    primaryColor: InstaChatColor = .defaultPrimary,
+    language: InstaChatLanguage? = nil
   ) {
+    let resolvedLanguage = language ?? .devicePreferred
     self.baseURL = baseURL
     self.token = token
     self.user = user
     self.roomID = roomID
     self.roomTitle = roomTitle
     self.historyLimit = historyLimit
-    self.title = title
+    self.title = title ?? InstaChatLocalizer(language: resolvedLanguage).text("Messages")
     self.googleMapsAPIKey = googleMapsAPIKey?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     self.primaryColor = primaryColor
+    self.language = resolvedLanguage
   }
 
   public func openingRoom(id roomID: String, title roomTitle: String? = nil) -> InstaChatConfiguration {
@@ -43,7 +47,8 @@ public struct InstaChatConfiguration: Sendable {
       historyLimit: historyLimit,
       title: title,
       googleMapsAPIKey: googleMapsAPIKey,
-      primaryColor: primaryColor
+      primaryColor: primaryColor,
+      language: language
     )
   }
 
@@ -59,7 +64,7 @@ public struct InstaChatConfiguration: Sendable {
       return nil
     }
 
-    return InstaChatRoom(id: roomID, title: roomTitle ?? "Chat")
+    return InstaChatRoom(id: roomID, title: roomTitle ?? localizer.text("Chat"))
   }
 }
 

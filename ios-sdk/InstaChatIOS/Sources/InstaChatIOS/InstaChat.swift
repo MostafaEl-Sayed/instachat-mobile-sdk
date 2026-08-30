@@ -11,9 +11,10 @@ public enum InstaChat {
     token: String,
     user: InstaChatUser,
     historyLimit: Int = 25,
-    title: String = "Messages",
+    title: String? = nil,
     googleMapsAPIKey: String? = nil,
-    primaryColor: InstaChatColor = .defaultPrimary
+    primaryColor: InstaChatColor = .defaultPrimary,
+    language: InstaChatLanguage? = nil
   ) -> InstaChatSDK {
     InstaChatSDK(
       baseURL: baseURL,
@@ -22,7 +23,8 @@ public enum InstaChat {
       historyLimit: historyLimit,
       title: title,
       googleMapsAPIKey: googleMapsAPIKey,
-      primaryColor: primaryColor
+      primaryColor: primaryColor,
+      language: language
     )
   }
 
@@ -49,14 +51,16 @@ public enum InstaChat {
     user: InstaChatUser,
     roomID: String? = nil,
     googleMapsAPIKey: String? = nil,
-    primaryColor: InstaChatColor = .defaultPrimary
+    primaryColor: InstaChatColor = .defaultPrimary,
+    language: InstaChatLanguage? = nil
   ) {
     let sdk = initialize(
       baseURL: baseURL,
       token: token,
       user: user,
       googleMapsAPIKey: googleMapsAPIKey,
-      primaryColor: primaryColor
+      primaryColor: primaryColor,
+      language: language
     )
     if let roomID {
       sdk.presentChat(from: viewController, roomID: roomID)
@@ -75,9 +79,10 @@ public struct InstaChatSDK: Sendable {
     token: String,
     user: InstaChatUser,
     historyLimit: Int = 25,
-    title: String = "Messages",
+    title: String? = nil,
     googleMapsAPIKey: String? = nil,
-    primaryColor: InstaChatColor = .defaultPrimary
+    primaryColor: InstaChatColor = .defaultPrimary,
+    language: InstaChatLanguage? = nil
   ) {
     self.configuration = InstaChatConfiguration(
       baseURL: baseURL,
@@ -86,7 +91,8 @@ public struct InstaChatSDK: Sendable {
       historyLimit: historyLimit,
       title: title,
       googleMapsAPIKey: googleMapsAPIKey,
-      primaryColor: primaryColor
+      primaryColor: primaryColor,
+      language: language
     )
   }
 
@@ -194,6 +200,8 @@ public struct InstaChatView: View {
       }
     }
     .tint(store.configuration.primaryColor.swiftUIColor)
+    .environment(\.locale, store.configuration.language.locale)
+    .environment(\.layoutDirection, store.configuration.language.isRightToLeft ? .rightToLeft : .leftToRight)
 #if os(iOS)
     .background {
       HostTabBarVisibilityBridge(

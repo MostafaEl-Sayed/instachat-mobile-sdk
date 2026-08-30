@@ -8,15 +8,16 @@ enum OutgoingMessageDeliveryState: Equatable, Sendable {
 struct InstaChatSendFailure: Codable, Hashable, Sendable {
   var message: String
 
-  static func userFacing(for error: Error, attachmentType: InstaChatAttachmentType? = nil) -> InstaChatSendFailure {
-    let item = itemName(for: attachmentType)
+  static func userFacing(for error: Error, attachmentType: InstaChatAttachmentType? = nil, language: InstaChatLanguage = .devicePreferred) -> InstaChatSendFailure {
+    let strings = InstaChatLocalizer(language: language)
+    let item = itemName(for: attachmentType, strings: strings)
 
     if let urlError = error as? URLError {
       switch urlError.code {
       case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost:
-        return InstaChatSendFailure(message: "No internet connection. Reconnect, then retry your \(item).")
+        return InstaChatSendFailure(message: strings.format("No internet connection. Reconnect, then retry your %@.", item))
       case .timedOut:
-        return InstaChatSendFailure(message: "Sending your \(item) took too long. Check your connection and retry.")
+        return InstaChatSendFailure(message: strings.format("Sending your %@ took too long. Check your connection and retry.", item))
       default:
         break
       }
@@ -25,57 +26,58 @@ struct InstaChatSendFailure: Codable, Hashable, Sendable {
     if let chatError = error as? InstaChatError {
       switch chatError {
       case .websocketClosed:
-        return InstaChatSendFailure(message: "Chat is reconnecting. Retry your \(item) in a moment.")
+        return InstaChatSendFailure(message: strings.format("Chat is reconnecting. Retry your %@ in a moment.", item))
       case let .backendStatus(status, _):
         switch status {
         case 401, 403:
-          return InstaChatSendFailure(message: "Your chat session has expired. Reopen chat, then retry.")
+          return InstaChatSendFailure(message: strings.text("Your chat session has expired. Reopen chat, then retry."))
         case 413:
-          return InstaChatSendFailure(message: "This \(item) is too large to send. Choose a smaller file.")
+          return InstaChatSendFailure(message: strings.format("This %@ is too large to send. Choose a smaller file.", item))
         case 429:
-          return InstaChatSendFailure(message: "Too many requests. Wait a moment, then retry your \(item).")
+          return InstaChatSendFailure(message: strings.format("Too many requests. Wait a moment, then retry your %@.", item))
         case 500...599:
-          return InstaChatSendFailure(message: "The chat service is temporarily unavailable. Retry your \(item) shortly.")
+          return InstaChatSendFailure(message: strings.format("The chat service is temporarily unavailable. Retry your %@ shortly.", item))
         default:
           break
         }
       case .invalidResponse:
-        return InstaChatSendFailure(message: "The chat service returned an unexpected response. Retry your \(item).")
+        return InstaChatSendFailure(message: strings.format("The chat service returned an unexpected response. Retry your %@.", item))
       case .missingRoom:
-        return InstaChatSendFailure(message: "This conversation is no longer available.")
+        return InstaChatSendFailure(message: strings.text("This conversation is no longer available."))
       case .invalidLocationPayload:
-        return InstaChatSendFailure(message: "Your location could not be prepared. Please share it again.")
+        return InstaChatSendFailure(message: strings.text("Your location could not be prepared. Please share it again."))
       }
     }
 
     let nsError = error as NSError
     if nsError.domain == NSCocoaErrorDomain, nsError.code == NSFileNoSuchFileError {
-      return InstaChatSendFailure(message: "The original \(item) is no longer available. Choose it again.")
+      return InstaChatSendFailure(message: strings.format("The original %@ is no longer available. Choose it again.", item))
     }
 
-    return InstaChatSendFailure(message: "We couldn't send your \(item). Check your connection and retry.")
+    return InstaChatSendFailure(message: strings.format("We couldn't send your %@. Check your connection and retry.", item))
   }
 
-  static func interrupted(attachmentType: InstaChatAttachmentType? = nil) -> InstaChatSendFailure {
-    InstaChatSendFailure(message: "Sending was interrupted. Tap Retry to send your \(itemName(for: attachmentType)).")
+  static func interrupted(attachmentType: InstaChatAttachmentType? = nil, language: InstaChatLanguage = .devicePreferred) -> InstaChatSendFailure {
+    let strings = InstaChatLocalizer(language: language)
+    return InstaChatSendFailure(message: strings.format("Sending was interrupted. Tap Retry to send your %@.", itemName(for: attachmentType, strings: strings)))
   }
 
-  static func actionMessage(for error: Error) -> String {
-    userFacing(for: error).message
+  static func actionMessage(for error: Error, language: InstaChatLanguage = .devicePreferred) -> String {
+    userFacing(for: error, language: language).message
   }
 
-  private static func itemName(for attachmentType: InstaChatAttachmentType?) -> String {
+  private static func itemName(for attachmentType: InstaChatAttachmentType?, strings: InstaChatLocalizer) -> String {
     switch attachmentType {
     case .image:
-      return "photo"
+      return strings.text("photo")
     case .video:
-      return "video"
+      return strings.text("video")
     case .audio:
-      return "voice note"
+      return strings.text("voice note")
     case .file:
-      return "file"
+      return strings.text("file")
     case .none:
-      return "message"
+      return strings.text("message")
     }
   }
 }

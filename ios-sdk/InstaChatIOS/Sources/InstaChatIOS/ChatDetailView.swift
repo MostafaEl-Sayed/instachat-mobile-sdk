@@ -37,6 +37,8 @@ struct ChatDetailView: View {
   var onClose: (() -> Void)?
   var onProviderProfileTap: ((InstaChatRoom) -> Void)?
 
+  private var strings: InstaChatLocalizer { store.configuration.localizer }
+
   var body: some View {
     VStack(spacing: 0) {
       transcript
@@ -54,11 +56,11 @@ struct ChatDetailView: View {
       if let onClose {
       #if os(iOS)
         ToolbarItem(placement: .topBarTrailing) {
-          SDKCloseButton(action: onClose)
+          SDKCloseButton(action: onClose, language: store.configuration.language)
         }
       #else
         ToolbarItem(placement: .automatic) {
-          SDKCloseButton(action: onClose)
+          SDKCloseButton(action: onClose, language: store.configuration.language)
         }
       #endif
       }
@@ -88,6 +90,7 @@ struct ChatDetailView: View {
       MapLocationPickerView(
         locationProvider: currentLocationProvider,
         mapProvider: store.configuration.locationMapProvider,
+        language: store.configuration.language,
         onSend: { location in
           isLocationPickerPresented = false
           Task {
@@ -115,7 +118,7 @@ struct ChatDetailView: View {
     .photosPicker(isPresented: $isPhotoPickerPresented, selection: $selectedPhoto, matching: .images)
     .photosPicker(isPresented: $isVideoPickerPresented, selection: $selectedVideo, matching: .videos)
     #endif
-    .alert("Unable to Complete Action", isPresented: Binding(
+    .alert(strings.text("Unable to Complete Action"), isPresented: Binding(
       get: { store.errorMessage != nil },
       set: { isPresented in
         if !isPresented {
@@ -123,16 +126,17 @@ struct ChatDetailView: View {
         }
       }
     )) {
-      Button("OK") {
+      Button(strings.text("OK")) {
         store.dismissError()
       }
     } message: {
-      Text(store.errorMessage ?? "Please try again.")
+      Text(store.errorMessage ?? strings.text("Please try again."))
     }
     .mediaPreviewCover(item: $mediaPreviewSelection) { selection in
       MediaPreviewScreen(
         selection: selection,
-        mediaAuthorization: mediaAuthorization
+        mediaAuthorization: mediaAuthorization,
+        language: store.configuration.language
       )
       .id(selection.id)
     }
@@ -154,7 +158,7 @@ struct ChatDetailView: View {
     }
     .buttonStyle(.plain)
     .disabled(onProviderProfileTap == nil)
-    .accessibilityLabel("Open provider profile")
+    .accessibilityLabel(strings.text("Open provider profile"))
   }
 
   private var displayRoom: InstaChatRoom {
@@ -177,6 +181,7 @@ struct ChatDetailView: View {
               mediaAuthorization: mediaAuthorization,
               voicePlaybackController: voicePlaybackController,
               deliveryState: store.deliveryState(for: message.id),
+              language: store.configuration.language,
               onRetry: {
                 Task {
                   await store.retryMessage(messageID: message.id)
@@ -190,7 +195,7 @@ struct ChatDetailView: View {
           }
 
           if store.typingRoomIDs.contains(room.id) {
-            TypingIndicatorView()
+            TypingIndicatorView(language: store.configuration.language)
               .id("typing")
           }
         }
@@ -256,7 +261,7 @@ struct ChatDetailView: View {
           .frame(width: 38, height: 38)
           .background(Color.gray.opacity(0.14), in: Circle())
       }
-      .accessibilityLabel("Open attachments")
+      .accessibilityLabel(strings.text("Open attachments"))
 
       #if os(iOS)
       Button {
@@ -265,7 +270,7 @@ struct ChatDetailView: View {
           do {
             try await voiceRecorder.start()
           } catch {
-            store.reportError(error.localizedDescription)
+            store.reportError(localizedMessage(for: error))
           }
         }
       } label: {
@@ -274,10 +279,10 @@ struct ChatDetailView: View {
           .frame(width: 38, height: 38)
           .background(Color.gray.opacity(0.14), in: Circle())
       }
-      .accessibilityLabel("Record voice note")
+      .accessibilityLabel(strings.text("Record voice note"))
       #endif
 
-      TextField("Message", text: $draft, axis: .vertical)
+      TextField(strings.text("Message"), text: $draft, axis: .vertical)
         .focused($isComposerFocused)
         .textFieldStyle(.plain)
         .lineLimit(1...5)
@@ -331,14 +336,14 @@ struct ChatDetailView: View {
         performAttachmentAction(action)
       } label: {
         AttachmentPanelItem(
-          title: action.title,
+          title: action.title(strings: strings),
           systemImage: action.systemImage,
           fillWidth: fillWidth
         )
       }
       .buttonStyle(.plain)
       .frame(maxWidth: fillWidth ? .infinity : nil, alignment: .leading)
-      .accessibilityLabel(action.accessibilityLabel)
+      .accessibilityLabel(action.accessibilityLabel(strings: strings))
     }
   }
 
@@ -379,7 +384,7 @@ struct ChatDetailView: View {
           .foregroundStyle(.secondary)
           .frame(width: 38, height: 38)
       }
-      .accessibilityLabel("Cancel voice note")
+      .accessibilityLabel(strings.text("Cancel voice note"))
 
       HStack(spacing: 10) {
         Circle()
@@ -405,7 +410,7 @@ struct ChatDetailView: View {
             await store.sendAttachment(fileURL: voiceNote.url, roomID: room.id, contentType: "audio/mp4")
           }
         } catch {
-          store.reportError(error.localizedDescription)
+          store.reportError(localizedMessage(for: error))
         }
       } label: {
         Image(systemName: "arrow.up")
@@ -414,7 +419,7 @@ struct ChatDetailView: View {
           .frame(width: 40, height: 40)
           .background(Color.accentColor, in: Circle())
       }
-      .accessibilityLabel("Send voice note")
+      .accessibilityLabel(strings.text("Send voice note"))
     }
   }
 
@@ -437,13 +442,13 @@ struct ChatDetailView: View {
   private func sendCurrentLocation() async {
     #if canImport(CoreLocation)
     do {
-      let location = try await currentLocationProvider.currentLocation()
+      let location = try await currentLocationProvider.currentLocation(language: store.configuration.language)
       await store.sendLocation(location, roomID: room.id)
     } catch {
-      store.reportError(error.localizedDescription)
+      store.reportError(localizedMessage(for: error))
     }
     #else
-    store.reportError("Location sharing is not available on this platform.")
+    store.reportError(strings.text("Location sharing is not available on this platform."))
     #endif
   }
 
@@ -467,7 +472,7 @@ struct ChatDetailView: View {
       do {
         isAttachmentPanelVisible = false
         guard let data = try await item.loadTransferable(type: Data.self) else {
-          store.reportError("The selected media could not be loaded.")
+          store.reportError(strings.text("The selected media could not be loaded."))
           return
         }
         let contentType = item.supportedContentTypes.first ?? .data
@@ -480,7 +485,7 @@ struct ChatDetailView: View {
         )
         await store.sendAttachment(fileURL: preparedFile.url, roomID: room.id, contentType: preparedFile.contentType)
       } catch {
-        store.reportError(error.localizedDescription)
+        store.reportError(localizedMessage(for: error))
       }
       selectedPhoto = nil
       selectedVideo = nil
@@ -494,7 +499,7 @@ struct ChatDetailView: View {
         let preparedFile = try await MediaPreflight.prepare(file)
         await store.sendAttachment(fileURL: preparedFile.url, roomID: room.id, contentType: preparedFile.contentType)
       } catch {
-        store.reportError(error.localizedDescription)
+        store.reportError(localizedMessage(for: error))
       }
     }
   }
@@ -506,9 +511,19 @@ struct ChatDetailView: View {
         let preparedFiles = try await MediaPreflight.prepare(files)
         await store.sendAttachments(preparedFiles, roomID: room.id)
       } catch {
-        store.reportError(error.localizedDescription)
+        store.reportError(localizedMessage(for: error))
       }
     }
+  }
+
+  private func localizedMessage(for error: Error) -> String {
+    if let mediaError = error as? MediaPreflightError {
+      return mediaError.message(language: store.configuration.language)
+    }
+    if let locationError = error as? CurrentLocationError {
+      return locationError.message(language: store.configuration.language)
+    }
+    return strings.text(error.localizedDescription)
   }
 }
 
@@ -613,13 +628,18 @@ enum MediaPreflightError: LocalizedError {
   case videoCompressionUnavailable
 
   var errorDescription: String? {
+    message(language: .devicePreferred)
+  }
+
+  func message(language: InstaChatLanguage) -> String {
+    let strings = InstaChatLocalizer(language: language)
     switch self {
     case let .videoTooLong(maxSeconds):
-      return "Videos must be \(maxSeconds) seconds or shorter."
+      return strings.format("Videos must be %d seconds or shorter.", maxSeconds)
     case let .videoTooLarge(maxMegabytes):
-      return "This video is too large. Choose a video smaller than \(maxMegabytes) MB."
+      return strings.format("This video is too large. Choose a video smaller than %d MB.", maxMegabytes)
     case .videoCompressionUnavailable:
-      return "This video could not be prepared for upload."
+      return strings.text("This video could not be prepared for upload.")
     }
   }
 }
@@ -797,11 +817,11 @@ private enum AttachmentAction: String, CaseIterable, Identifiable {
 
   var id: String { rawValue }
 
-  var title: String {
+  func title(strings: InstaChatLocalizer) -> String {
     switch self {
-    case .location: "Location"
-    case .photo: "Photo"
-    case .video: "Video"
+    case .location: strings.text("Location")
+    case .photo: strings.text("Photo")
+    case .video: strings.text("Video")
     }
   }
 
@@ -813,11 +833,11 @@ private enum AttachmentAction: String, CaseIterable, Identifiable {
     }
   }
 
-  var accessibilityLabel: String {
+  func accessibilityLabel(strings: InstaChatLocalizer) -> String {
     switch self {
-    case .location: "Share a location"
-    case .photo: "Choose photos"
-    case .video: "Choose a video"
+    case .location: strings.text("Share a location")
+    case .photo: strings.text("Choose photos")
+    case .video: strings.text("Choose a video")
     }
   }
 }
@@ -848,8 +868,11 @@ private struct MessageBubbleView: View {
   var mediaAuthorization: MediaRequestAuthorization
   @ObservedObject var voicePlaybackController: VoiceNotePlaybackController
   var deliveryState: OutgoingMessageDeliveryState?
+  var language: InstaChatLanguage
   var onRetry: () -> Void
   var onPreviewSelection: (MediaPreviewSelection) -> Void
+
+  private var strings: InstaChatLocalizer { InstaChatLocalizer(language: language) }
 
   var body: some View {
     HStack(alignment: .bottom) {
@@ -880,7 +903,7 @@ private struct MessageBubbleView: View {
         if case .sending = deliveryState {
           ProgressView()
             .controlSize(.mini)
-          Text("Sending")
+          Text(strings.text("Sending"))
             .font(.caption2)
             .foregroundStyle(.secondary)
         }
@@ -895,7 +918,7 @@ private struct MessageBubbleView: View {
           .frame(maxWidth: 260, alignment: isCurrentUser ? .trailing : .leading)
 
         Button(action: onRetry) {
-          Label("Retry", systemImage: "arrow.clockwise")
+          Label(strings.text("Retry"), systemImage: "arrow.clockwise")
             .font(.caption.weight(.semibold))
             .padding(.horizontal, 12)
             .frame(minHeight: 36)
@@ -903,7 +926,7 @@ private struct MessageBubbleView: View {
             .background(Color.red.opacity(0.1), in: Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Retry sending message")
+        .accessibilityLabel(strings.text("Retry sending message"))
         .accessibilityHint(failure.message)
       }
     }
@@ -913,10 +936,10 @@ private struct MessageBubbleView: View {
   private var content: some View {
     switch message.type {
     case .text:
-      LinkedMessageText(messageID: message.id, content: message.content, isCurrentUser: isCurrentUser)
+      LinkedMessageText(messageID: message.id, content: message.content, isCurrentUser: isCurrentUser, language: language)
         .linkedBubbleStyle(isCurrentUser: isCurrentUser)
     case .location:
-      LocationBubble(location: message.location, isCurrentUser: isCurrentUser)
+      LocationBubble(location: message.location, isCurrentUser: isCurrentUser, language: language)
     case .image, .file:
       if let attachment = message.attachment {
         AttachmentBubble(
@@ -925,10 +948,11 @@ private struct MessageBubbleView: View {
           isCurrentUser: isCurrentUser,
           mediaAuthorization: mediaAuthorization,
           voicePlaybackController: voicePlaybackController,
+          language: language,
           onPreview: onPreviewSelection
         )
       } else {
-        LinkedMessageText(messageID: message.id, content: message.content, isCurrentUser: isCurrentUser)
+        LinkedMessageText(messageID: message.id, content: message.content, isCurrentUser: isCurrentUser, language: language)
           .linkedBubbleStyle(isCurrentUser: isCurrentUser)
       }
     }
@@ -939,6 +963,9 @@ private struct LinkedMessageText: View {
   var messageID: String
   var content: String
   var isCurrentUser: Bool
+  var language: InstaChatLanguage
+
+  private var strings: InstaChatLocalizer { InstaChatLocalizer(language: language) }
 
   private var copyPayload: MessageCopyPayload {
     MessageCopyPayload(messageID: messageID, content: content)
@@ -956,11 +983,11 @@ private struct LinkedMessageText: View {
         Button {
           copyPayload.copy(using: PlatformPasteboard.copy)
         } label: {
-          Label("Copy", systemImage: "doc.on.doc")
+          Label(strings.text("Copy"), systemImage: "doc.on.doc")
         }
       }
       .accessibilityLabel(content)
-      .accessibilityAction(named: "Copy message") {
+      .accessibilityAction(named: Text(strings.text("Copy message"))) {
         copyPayload.copy(using: PlatformPasteboard.copy)
       }
   }
@@ -1033,7 +1060,10 @@ private struct AttachmentBubble: View {
   var isCurrentUser: Bool
   var mediaAuthorization: MediaRequestAuthorization
   @ObservedObject var voicePlaybackController: VoiceNotePlaybackController
+  var language: InstaChatLanguage
   var onPreview: (MediaPreviewSelection) -> Void
+
+  private var strings: InstaChatLocalizer { InstaChatLocalizer(language: language) }
 
   var body: some View {
     Group {
@@ -1044,18 +1074,19 @@ private struct AttachmentBubble: View {
         Button {
           previewSelection.open(using: onPreview)
         } label: {
-          fileBubble(systemImage: "play.rectangle.fill", title: attachment.fileName, subtitle: "Tap to preview")
+          fileBubble(systemImage: "play.rectangle.fill", title: attachment.fileName, subtitle: strings.text("Tap to preview"))
             .bubbleStyle(isCurrentUser: isCurrentUser)
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
-        .accessibilityLabel("Play video \(attachment.fileName)")
+        .accessibilityLabel(strings.format("Play video %@", attachment.fileName))
       } else if attachment.type == .audio {
         VoiceNoteBubble(
           attachment: attachment,
           isCurrentUser: isCurrentUser,
           mediaAuthorization: mediaAuthorization,
-          playbackController: voicePlaybackController
+          playbackController: voicePlaybackController,
+          language: language
         )
           .bubbleStyle(isCurrentUser: isCurrentUser)
       } else {
@@ -1074,7 +1105,8 @@ private struct AttachmentBubble: View {
       contentMode: .fill,
       previewSelection: previewSelection,
       onOpen: onPreview,
-      openAccessibilityLabel: "Open image \(attachment.fileName)"
+      openAccessibilityLabel: strings.format("Open image %@", attachment.fileName),
+      language: language
     )
     .frame(width: 220, height: 150)
     .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -1114,6 +1146,10 @@ private struct VoiceNoteBubble: View {
   var mediaAuthorization: MediaRequestAuthorization
   @ObservedObject var playbackController: VoiceNotePlaybackController
 
+  var language: InstaChatLanguage
+
+  private var strings: InstaChatLocalizer { InstaChatLocalizer(language: language) }
+
   private var isPlaying: Bool {
     playbackController.isPlaying(attachmentID: attachment.id)
   }
@@ -1145,18 +1181,18 @@ private struct VoiceNoteBubble: View {
 
   private var playbackAccessibilityLabel: String {
     if isLoading {
-      return "Downloading voice note"
+      return strings.text("Downloading voice note")
     }
     if isPlaying {
-      return "Pause voice note"
+      return strings.text("Pause voice note")
     }
     if playbackError != nil {
-      return "Retry voice note"
+      return strings.text("Retry voice note")
     }
     if isCached {
-      return "Play voice note"
+      return strings.text("Play voice note")
     }
-    return "Download voice note"
+    return strings.text("Download voice note")
   }
 
   var body: some View {
@@ -1194,14 +1230,14 @@ private struct VoiceNoteBubble: View {
 
       if playbackError != nil {
         HStack(spacing: 8) {
-          Text("Voice note isn't ready yet.")
+          Text(strings.text("Voice note isn't ready yet."))
             .font(.caption2)
             .foregroundStyle(isCurrentUser ? .white.opacity(0.82) : .secondary)
 
           Button {
             playbackController.toggle(attachment: attachment, authorization: mediaAuthorization)
           } label: {
-            Label("Retry", systemImage: "arrow.clockwise")
+            Label(strings.text("Retry"), systemImage: "arrow.clockwise")
               .font(.caption.weight(.semibold))
               .padding(.horizontal, 10)
               .frame(minHeight: 34)
@@ -1211,7 +1247,7 @@ private struct VoiceNoteBubble: View {
               )
           }
           .buttonStyle(.plain)
-          .accessibilityLabel("Retry voice note playback")
+          .accessibilityLabel(strings.text("Retry voice note playback"))
         }
       }
     }
@@ -1393,7 +1429,10 @@ private final class VoiceNotePlaybackController: ObservableObject {
 private struct MediaPreviewScreen: View {
   var selection: MediaPreviewSelection
   var mediaAuthorization: MediaRequestAuthorization
+  var language: InstaChatLanguage
   @Environment(\.dismiss) private var dismiss
+
+  private var strings: InstaChatLocalizer { InstaChatLocalizer(language: language) }
 
   private var attachment: InstaChatAttachment {
     selection.attachment
@@ -1409,14 +1448,16 @@ private struct MediaPreviewScreen: View {
             url: attachment.url,
             fileName: attachment.fileName,
             authorization: mediaAuthorization,
-            contentMode: .fit
+            contentMode: .fit,
+            language: language
           )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if attachment.type == .video {
           VideoPreviewPlayer(
             url: attachment.url,
             fileName: attachment.fileName,
-            authorization: mediaAuthorization
+            authorization: mediaAuthorization,
+            language: language
           )
             .ignoresSafeArea(edges: .bottom)
         } else {
@@ -1434,7 +1475,7 @@ private struct MediaPreviewScreen: View {
           } label: {
             Image(systemName: "xmark")
           }
-          .accessibilityLabel("Close preview")
+          .accessibilityLabel(strings.text("Close preview"))
         }
       }
     }
@@ -1460,6 +1501,7 @@ private struct AuthenticatedRemoteImage: View {
   var previewSelection: MediaPreviewSelection?
   var onOpen: ((MediaPreviewSelection) -> Void)?
   var openAccessibilityLabel: String?
+  var language: InstaChatLanguage
 
   @State private var image: PlatformImage?
   @State private var didFail = false
@@ -1473,7 +1515,8 @@ private struct AuthenticatedRemoteImage: View {
     contentMode: ContentMode,
     previewSelection: MediaPreviewSelection? = nil,
     onOpen: ((MediaPreviewSelection) -> Void)? = nil,
-    openAccessibilityLabel: String? = nil
+    openAccessibilityLabel: String? = nil,
+    language: InstaChatLanguage = .devicePreferred
   ) {
     self.identity = identity
     self.url = url
@@ -1483,6 +1526,7 @@ private struct AuthenticatedRemoteImage: View {
     self.previewSelection = previewSelection
     self.onOpen = onOpen
     self.openAccessibilityLabel = openAccessibilityLabel
+    self.language = language
     _image = State(initialValue: PlatformImageMemoryCache.shared.image(for: url, authorization: authorization))
   }
 
@@ -1503,13 +1547,13 @@ private struct AuthenticatedRemoteImage: View {
                   PlatformImageMemoryCache.shared.removeImage(for: url, authorization: authorization)
                   retryGeneration &+= 1
                 } label: {
-                  Label("Retry", systemImage: "arrow.clockwise")
+                  Label(InstaChatLocalizer(language: language).text("Retry"), systemImage: "arrow.clockwise")
                     .font(.subheadline.weight(.semibold))
                     .frame(minHeight: 44)
                     .padding(.horizontal, 10)
                 }
                 .buttonStyle(.borderedProminent)
-                .accessibilityHint("Attempts to load this image again")
+                .accessibilityHint(InstaChatLocalizer(language: language).text("Attempts to load this image again"))
               }
             }
         } else {
@@ -1605,7 +1649,7 @@ private struct AuthenticatedRemoteImage: View {
         .frame(width: size.width, height: size.height)
         .contentShape(Rectangle())
         .id(previewSelection.id)
-        .accessibilityLabel(openAccessibilityLabel ?? "Open image")
+        .accessibilityLabel(openAccessibilityLabel ?? InstaChatLocalizer(language: language).text("Open image"))
       }
     }
     .frame(width: size.width, height: size.height)
@@ -1688,7 +1732,10 @@ private struct VideoPreviewPlayer: View {
   let url: URL
   let fileName: String
   let authorization: MediaRequestAuthorization
+  let language: InstaChatLanguage
   @StateObject private var playbackController = VideoPreviewPlaybackController()
+
+  private var strings: InstaChatLocalizer { InstaChatLocalizer(language: language) }
 
   var body: some View {
     ZStack {
@@ -1698,7 +1745,7 @@ private struct VideoPreviewPlayer: View {
         VStack(spacing: 12) {
           ProgressView()
             .tint(.white)
-          Text("Preparing video...")
+          Text(strings.text("Preparing video..."))
             .font(.footnote)
             .foregroundStyle(.white.opacity(0.82))
         }
@@ -1716,23 +1763,24 @@ private struct VideoPreviewPlayer: View {
               url: url,
               fileName: fileName,
               authorization: authorization,
+              language: language,
               force: true
             )
           } label: {
-            Label("Retry", systemImage: "arrow.clockwise")
+            Label(strings.text("Retry"), systemImage: "arrow.clockwise")
               .font(.subheadline.weight(.semibold))
               .padding(.horizontal, 18)
               .padding(.vertical, 10)
           }
           .buttonStyle(.borderedProminent)
-          .accessibilityHint("Attempts to load and play this video again")
+          .accessibilityHint(strings.text("Attempts to load and play this video again"))
         }
         .foregroundStyle(.white)
         .padding(20)
       }
     }
       .task(id: VideoPlaybackRequest(url: url, fileName: fileName)) {
-        playbackController.load(url: url, fileName: fileName, authorization: authorization)
+        playbackController.load(url: url, fileName: fileName, authorization: authorization, language: language)
       }
       .onDisappear {
         playbackController.stop()
@@ -1764,6 +1812,7 @@ private final class VideoPreviewPlaybackController: ObservableObject {
     url: URL,
     fileName: String,
     authorization: MediaRequestAuthorization,
+    language: InstaChatLanguage,
     force: Bool = false
   ) {
     let request = VideoPlaybackRequest(url: url, fileName: fileName)
@@ -1784,7 +1833,7 @@ private final class VideoPreviewPlaybackController: ObservableObject {
           authorization: authorization
         )
         try Task.checkCancellation()
-        self?.installPlayer(source: source, request: request)
+        self?.installPlayer(source: source, request: request, language: language)
       } catch is CancellationError {
         return
       } catch {
@@ -1792,7 +1841,7 @@ private final class VideoPreviewPlaybackController: ObservableObject {
           return
         }
         self?.isLoading = false
-        self?.playbackError = "Video is not available yet. Please try again."
+        self?.playbackError = InstaChatLocalizer(language: language).text("Video is not available yet. Please try again.")
       }
     }
   }
@@ -1813,7 +1862,7 @@ private final class VideoPreviewPlaybackController: ObservableObject {
     }
   }
 
-  private func installPlayer(source: VideoPlaybackSource, request: VideoPlaybackRequest) {
+  private func installPlayer(source: VideoPlaybackSource, request: VideoPlaybackRequest, language: InstaChatLanguage) {
     guard activeRequest == request else {
       return
     }
@@ -1840,7 +1889,7 @@ private final class VideoPreviewPlaybackController: ObservableObject {
         case .failed:
           self.player?.pause()
           self.isLoading = false
-          self.playbackError = "Video playback failed. Please try again."
+          self.playbackError = InstaChatLocalizer(language: language).text("Video playback failed. Please try again.")
         case .unknown:
           break
         @unknown default:
@@ -2143,8 +2192,11 @@ private struct StaticWaveformView: View {
 private struct LocationBubble: View {
   var location: InstaChatLocation?
   var isCurrentUser: Bool
+  var language: InstaChatLanguage
   @Environment(\.openURL) private var openURL
   @State private var isActionDialogPresented = false
+
+  private var strings: InstaChatLocalizer { InstaChatLocalizer(language: language) }
 
   var body: some View {
     Button {
@@ -2161,7 +2213,7 @@ private struct LocationBubble: View {
           }
 
         HStack(spacing: 6) {
-          Text(location?.name ?? "Shared location")
+          Text(location?.name ?? strings.text("Shared location"))
             .font(.headline)
           Image(systemName: "arrow.up.right.square")
             .font(.caption)
@@ -2177,26 +2229,26 @@ private struct LocationBubble: View {
       .bubbleStyle(isCurrentUser: isCurrentUser)
     }
     .buttonStyle(.plain)
-    .confirmationDialog("Open Location", isPresented: $isActionDialogPresented, titleVisibility: .visible) {
+    .confirmationDialog(strings.text("Open Location"), isPresented: $isActionDialogPresented, titleVisibility: .visible) {
       if let location {
-        Button("Open in Apple Maps") {
-          if let url = location.appleMapsURL {
+        Button(strings.text("Open in Apple Maps")) {
+          if let url = location.appleMapsURL(language: language) {
             openURL(url)
           }
         }
 
-        Button("Open in Google Maps") {
+        Button(strings.text("Open in Google Maps")) {
           if let url = location.googleMapsURL {
             openURL(url)
           }
         }
 
-        Button("Copy Coordinates") {
+        Button(strings.text("Copy Coordinates")) {
           PlatformPasteboard.copy(location.coordinateText)
         }
       }
 
-      Button("Cancel", role: .cancel) {}
+      Button(strings.text("Cancel"), role: .cancel) {}
     }
   }
 }
@@ -2206,12 +2258,15 @@ private extension InstaChatLocation {
     "\(latitude), \(longitude)"
   }
 
-  var encodedName: String {
-    (name ?? "Shared location").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "Shared%20location"
+  func encodedName(language: InstaChatLanguage) -> String {
+    let fallback = InstaChatLocalizer(language: language).text("Shared location")
+    return (name ?? fallback).addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
+      ?? fallback.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
+      ?? "Shared%20location"
   }
 
-  var appleMapsURL: URL? {
-    URL(string: "http://maps.apple.com/?ll=\(latitude),\(longitude)&q=\(encodedName)")
+  func appleMapsURL(language: InstaChatLanguage) -> URL? {
+    URL(string: "http://maps.apple.com/?ll=\(latitude),\(longitude)&q=\(encodedName(language: language))")
   }
 
   var googleMapsURL: URL? {
@@ -2231,9 +2286,11 @@ private enum PlatformPasteboard {
 }
 
 private struct TypingIndicatorView: View {
+  var language: InstaChatLanguage
+
   var body: some View {
     HStack {
-      Text("Typing...")
+      Text(InstaChatLocalizer(language: language).text("Typing..."))
         .font(.footnote)
         .foregroundStyle(.secondary)
         .padding(.horizontal, 12)

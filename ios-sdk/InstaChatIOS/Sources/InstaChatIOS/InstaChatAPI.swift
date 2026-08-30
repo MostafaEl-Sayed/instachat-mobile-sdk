@@ -71,7 +71,13 @@ public final class InstaChatClient: NSObject, InstaChatClientProtocol, URLSessio
       .flatMap { $0.members ?? [] }
       .first { $0.matchesCurrentUser(externalUserID: currentExternalUserID) }?
       .id
-    return rooms.map { $0.toDomain(currentUserID: currentExternalUserID, currentBackendUserID: currentBackendUserID) }
+    return rooms.map {
+      $0.toDomain(
+        currentUserID: currentExternalUserID,
+        currentBackendUserID: currentBackendUserID,
+        language: configuration.language
+      )
+    }
   }
 
   public func getMessages(roomID: String, limit: Int? = nil, cursor: String? = nil) async throws -> InstaChatMessagesPage {
@@ -471,12 +477,12 @@ struct BackendRoom: Decodable {
     case members
   }
 
-  func toDomain(currentUserID: String, currentBackendUserID: String?) -> InstaChatRoom {
+  func toDomain(currentUserID: String, currentBackendUserID: String?, language: InstaChatLanguage = .english) -> InstaChatRoom {
     let otherMember = members?.first { !$0.matchesCurrentUser(externalUserID: currentUserID, backendUserID: currentBackendUserID) } ?? members?.first
     return InstaChatRoom(
       id: id,
-      title: otherMember?.displayName ?? "Chat",
-      subtitle: lastMessage?.summary ?? (otherMember?.isOnline == true ? "Online" : nil),
+      title: otherMember?.displayName ?? InstaChatLocalizer(language: language).text("Chat"),
+      subtitle: lastMessage?.summary(language: language) ?? (otherMember?.isOnline == true ? InstaChatLocalizer(language: language).text("Online") : nil),
       avatarURL: otherMember?.avatarURL,
       providerID: otherMember?.id,
       providerExternalUserID: otherMember?.externalUserID,
@@ -486,8 +492,8 @@ struct BackendRoom: Decodable {
     )
   }
 
-  func toDomain(currentUserID: String) -> InstaChatRoom {
-    toDomain(currentUserID: currentUserID, currentBackendUserID: nil)
+  func toDomain(currentUserID: String, language: InstaChatLanguage = .english) -> InstaChatRoom {
+    toDomain(currentUserID: currentUserID, currentBackendUserID: nil, language: language)
   }
 }
 
@@ -541,15 +547,20 @@ struct BackendRoomLastMessage: Decodable {
   }
 
   var summary: String {
+    summary(language: .english)
+  }
+
+  func summary(language: InstaChatLanguage) -> String {
+    let strings = InstaChatLocalizer(language: language)
     switch type {
     case .text:
-      return content.isEmpty ? "Message" : content
+      return content.isEmpty ? strings.text("Message") : content
     case .image:
-      return InstaChatAttachmentType.image.roomPreviewText
+      return InstaChatAttachmentType.image.roomPreviewText(language: language)
     case .file:
-      return (attachments?.first?.resolvedType ?? MimeTypeResolver.attachmentType(forFileName: content)).roomPreviewText
+      return (attachments?.first?.resolvedType ?? MimeTypeResolver.attachmentType(forFileName: content)).roomPreviewText(language: language)
     case .location:
-      return "Location"
+      return strings.text("Location")
     }
   }
 }
@@ -780,16 +791,17 @@ enum MimeTypeResolver {
 }
 
 extension InstaChatAttachmentType {
-  var roomPreviewText: String {
+  func roomPreviewText(language: InstaChatLanguage = .devicePreferred) -> String {
+    let strings = InstaChatLocalizer(language: language)
     switch self {
     case .image:
-      return "Photo"
+      return strings.text("Photo")
     case .video:
-      return "Video"
+      return strings.text("Video")
     case .audio:
-      return "Voice note"
+      return strings.text("Voice note")
     case .file:
-      return "File"
+      return strings.text("File")
     }
   }
 }

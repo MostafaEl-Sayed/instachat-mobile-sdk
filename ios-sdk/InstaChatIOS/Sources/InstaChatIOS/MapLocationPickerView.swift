@@ -7,6 +7,7 @@ import SwiftUI
 struct MapLocationPickerView: View {
   @ObservedObject var locationProvider: CurrentLocationProvider
   var mapProvider: InstaChatLocationMapProvider
+  var language: InstaChatLanguage
   var onSend: (InstaChatLocation) -> Void
   var onCancel: () -> Void
 
@@ -17,6 +18,8 @@ struct MapLocationPickerView: View {
   @State private var isResolving = false
   @State private var errorMessage: String?
   @StateObject private var searchModel = LocationSearchModel()
+
+  private var strings: InstaChatLocalizer { InstaChatLocalizer(language: language) }
 
   var body: some View {
     NavigationStack {
@@ -39,14 +42,14 @@ struct MapLocationPickerView: View {
                 await centerOnCurrentLocation()
               }
             } label: {
-              Label(isLocating ? "Locating" : "My Location", systemImage: "location.fill")
+              Label(strings.text(isLocating ? "Locating" : "My Location"), systemImage: "location.fill")
                 .font(.subheadline.weight(.semibold))
                 .padding(.horizontal, 14)
                 .frame(height: 44)
                 .background(.regularMaterial, in: Capsule())
             }
             .disabled(isLocating || isResolving)
-            .accessibilityHint("Centers the map on your current location")
+            .accessibilityHint(strings.text("Centers the map on your current location"))
 
             Spacer()
 
@@ -60,9 +63,9 @@ struct MapLocationPickerView: View {
           .padding(16)
         }
       }
-      .navigationTitle("Choose Location")
+      .navigationTitle(strings.text("Choose Location"))
       .navigationBarTitleDisplayMode(.inline)
-      .searchable(text: $searchModel.query, prompt: "Search for a place")
+      .searchable(text: $searchModel.query, prompt: strings.text("Search for a place"))
       .overlay(alignment: .top) {
         if !searchModel.results.isEmpty {
           searchResults
@@ -70,24 +73,24 @@ struct MapLocationPickerView: View {
       }
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel", action: onCancel)
+          Button(strings.text("Cancel"), action: onCancel)
         }
         ToolbarItem(placement: .confirmationAction) {
-          Button(isResolving ? "Sending..." : "Send") {
+          Button(strings.text(isResolving ? "Sending..." : "Send")) {
             sendSelectedLocation()
           }
           .disabled(!hasSelection || isLocating || isResolving)
         }
       }
-      .alert("Location Unavailable", isPresented: Binding(
+      .alert(strings.text("Location Unavailable"), isPresented: Binding(
         get: { errorMessage != nil },
         set: { if !$0 { errorMessage = nil } }
       )) {
-        Button("OK", role: .cancel) {
+        Button(strings.text("OK"), role: .cancel) {
           errorMessage = nil
         }
       } message: {
-        Text(errorMessage ?? "Try again or choose a location manually on the map.")
+        Text(errorMessage ?? strings.text("Try again or choose a location manually on the map."))
       }
     }
   }
@@ -161,7 +164,7 @@ struct MapLocationPickerView: View {
         .font(.system(size: 16, weight: .semibold))
         .frame(width: 44, height: 40)
     }
-    .accessibilityLabel(systemImage == "plus" ? "Zoom in" : "Zoom out")
+    .accessibilityLabel(strings.text(systemImage == "plus" ? "Zoom in" : "Zoom out"))
   }
 
   @MainActor
@@ -173,7 +176,7 @@ struct MapLocationPickerView: View {
     defer { isLocating = false }
 
     do {
-      let location = try await locationProvider.currentLocation()
+      let location = try await locationProvider.currentLocation(language: language)
       selectedCoordinate = CLLocationCoordinate2D(
         latitude: location.latitude,
         longitude: location.longitude
@@ -181,7 +184,7 @@ struct MapLocationPickerView: View {
       zoom = 16
       hasSelection = true
     } catch {
-      errorMessage = locationProvider.userFacingMessage(for: error)
+      errorMessage = locationProvider.userFacingMessage(for: error, language: language)
     }
   }
 
@@ -194,7 +197,8 @@ struct MapLocationPickerView: View {
     Task {
       let location = await locationProvider.selectedLocation(
         latitude: coordinate.latitude,
-        longitude: coordinate.longitude
+        longitude: coordinate.longitude,
+        language: language
       )
       isResolving = false
       onSend(location)
@@ -210,7 +214,7 @@ struct MapLocationPickerView: View {
       hasSelection = true
       searchModel.clear()
     } catch {
-      errorMessage = "That place could not be located. Try another search."
+      errorMessage = strings.text("That place could not be located. Try another search.")
     }
   }
 }

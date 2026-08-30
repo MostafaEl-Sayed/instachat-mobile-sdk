@@ -14,33 +14,33 @@ final class CurrentLocationProvider: NSObject, ObservableObject {
     manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
   }
 
-  func currentLocation() async throws -> InstaChatLocation {
+  func currentLocation(language: InstaChatLanguage = .devicePreferred) async throws -> InstaChatLocation {
     let location = try await requestLocation()
-    let name = await reverseGeocodedName(for: location)
+    let name = await reverseGeocodedName(for: location, language: language)
 
     return InstaChatLocation(
       latitude: location.coordinate.latitude,
       longitude: location.coordinate.longitude,
-      name: name ?? "Current location"
+      name: name ?? InstaChatLocalizer(language: language).text("Current location")
     )
   }
 
-  func selectedLocation(latitude: Double, longitude: Double) async -> InstaChatLocation {
+  func selectedLocation(latitude: Double, longitude: Double, language: InstaChatLanguage = .devicePreferred) async -> InstaChatLocation {
     let location = CLLocation(latitude: latitude, longitude: longitude)
-    let name = await reverseGeocodedName(for: location)
+    let name = await reverseGeocodedName(for: location, language: language)
 
-    return makeSelectedMapLocation(latitude: latitude, longitude: longitude, name: name)
+    return makeSelectedMapLocation(latitude: latitude, longitude: longitude, name: name, language: language)
   }
 
-  func userFacingMessage(for error: Error) -> String {
+  func userFacingMessage(for error: Error, language: InstaChatLanguage = .devicePreferred) -> String {
     if let locationError = error as? CurrentLocationError {
-      return locationError.localizedDescription
+      return locationError.message(language: language)
     }
     if let coreLocationError = error as? CLError,
        coreLocationError.code == .locationUnknown {
-      return CurrentLocationError.unavailable.localizedDescription
+      return CurrentLocationError.unavailable.message(language: language)
     }
-    return "Your current location could not be found. Choose a location manually on the map or try again."
+    return InstaChatLocalizer(language: language).text("Your current location could not be found. Choose a location manually on the map or try again.")
   }
 
   private func requestLocation() async throws -> CLLocation {
@@ -75,9 +75,9 @@ final class CurrentLocationProvider: NSObject, ObservableObject {
     #endif
   }
 
-  private func reverseGeocodedName(for location: CLLocation) async -> String? {
+  private func reverseGeocodedName(for location: CLLocation, language: InstaChatLanguage) async -> String? {
     do {
-      let placemarks = try await geocoder.reverseGeocodeLocation(location)
+      let placemarks = try await geocoder.reverseGeocodeLocation(location, preferredLocale: language.locale)
       guard let placemark = placemarks.first else {
         return nil
       }
@@ -106,11 +106,11 @@ final class CurrentLocationProvider: NSObject, ObservableObject {
   }
 }
 
-func makeSelectedMapLocation(latitude: Double, longitude: Double, name: String? = nil) -> InstaChatLocation {
+func makeSelectedMapLocation(latitude: Double, longitude: Double, name: String? = nil, language: InstaChatLanguage = .devicePreferred) -> InstaChatLocation {
   InstaChatLocation(
     latitude: min(max(latitude, -90), 90),
     longitude: min(max(longitude, -180), 180),
-    name: name ?? "Selected location"
+    name: name ?? InstaChatLocalizer(language: language).text("Selected location")
   )
 }
 
@@ -160,15 +160,20 @@ enum CurrentLocationError: LocalizedError {
   case requestInProgress
 
   var errorDescription: String? {
+    message(language: .devicePreferred)
+  }
+
+  func message(language: InstaChatLanguage) -> String {
+    let strings = InstaChatLocalizer(language: language)
     switch self {
     case .servicesDisabled:
-      return "Location Services are disabled. Enable Location Services to share your current location."
+      return strings.text("Location Services are disabled. Enable Location Services to share your current location.")
     case .permissionDenied:
-      return "Location permission is required to share your current location."
+      return strings.text("Location permission is required to share your current location.")
     case .unavailable:
-      return "Your current location could not be found. Choose a location manually on the map or try again."
+      return strings.text("Your current location could not be found. Choose a location manually on the map or try again.")
     case .requestInProgress:
-      return "Current location is already being requested."
+      return strings.text("Current location is already being requested.")
     }
   }
 }

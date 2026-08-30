@@ -2,6 +2,65 @@ import XCTest
 @testable import InstaChatIOS
 
 final class InstaChatContractTests: XCTestCase {
+  func testExplicitArabicLanguageLocalizesDefaultTitlesAndPreservesAcrossRoomNavigation() {
+    let configuration = InstaChatConfiguration(
+      baseURL: URL(string: "https://instachat.instakit.pro")!,
+      token: "token",
+      user: InstaChatUser(id: "user-1", name: "Mostafa"),
+      language: .arabic
+    )
+
+    let roomConfiguration = configuration.openingRoom(id: "room-1")
+
+    XCTAssertEqual(configuration.language, .arabic)
+    XCTAssertEqual(configuration.title, "الرسائل")
+    XCTAssertEqual(roomConfiguration.language, .arabic)
+    XCTAssertEqual(roomConfiguration.initialRoom?.title, "المحادثة")
+  }
+
+  func testLanguageIdentifierRecognizesArabicRegionalCodesAndDefaultsOthersToEnglish() {
+    XCTAssertEqual(InstaChatLanguage(identifier: "ar-EG"), .arabic)
+    XCTAssertEqual(InstaChatLanguage(identifier: "ar_SA"), .arabic)
+    XCTAssertEqual(InstaChatLanguage(identifier: "en-GB"), .english)
+    XCTAssertEqual(InstaChatLanguage(identifier: "fr-FR"), .english)
+  }
+
+  @MainActor
+  func testArabicRoomPreviewsLocalizeMediaLabels() {
+    let configuration = InstaChatConfiguration(
+      baseURL: URL(string: "https://instachat.instakit.pro")!,
+      token: "token",
+      user: InstaChatUser(id: "user-1", name: "Mostafa"),
+      language: .arabic
+    )
+    let store = InstaChatStore(configuration: configuration)
+    let location = Self.message(
+      id: "location-ar",
+      roomID: "room-location-ar",
+      content: "",
+      type: .location,
+      createdAt: Self.date(1),
+      location: InstaChatLocation(latitude: 30, longitude: 31)
+    )
+
+    store.append(location, replacingLocalEcho: false)
+
+    XCTAssertEqual(store.room(id: location.roomID)?.subtitle, "الموقع")
+  }
+
+  func testArabicSendFailureIsLocalized() {
+    let failure = InstaChatSendFailure.userFacing(
+      for: URLError(.notConnectedToInternet),
+      attachmentType: .image,
+      language: .arabic
+    )
+
+    let normalized = failure.message
+      .replacingOccurrences(of: "\u{2068}", with: "")
+      .replacingOccurrences(of: "\u{2069}", with: "")
+    XCTAssertEqual(normalized, "لا يوجد اتصال بالإنترنت. أعد الاتصال ثم حاول إرسال الصورة مرة أخرى.")
+  }
+
   func testConfigurationCanOpenSpecificRoomFromInitializedSDK() {
     let brandColor = InstaChatColor(rgb: 0xA68534)
     let sdk = InstaChat.initialize(

@@ -74,7 +74,7 @@ final class InstaChatStore: ObservableObject {
       let fetchedRooms = try await client.getRooms()
       rooms = mergeRoomList(fetchedRooms)
     } catch {
-      errorMessage = InstaChatSendFailure.actionMessage(for: error)
+      errorMessage = InstaChatSendFailure.actionMessage(for: error, language: configuration.language)
     }
     isLoadingRooms = false
   }
@@ -96,7 +96,7 @@ final class InstaChatStore: ObservableObject {
       let page = try await client.getMessages(roomID: roomID, limit: configuration.historyLimit, cursor: nil)
       mergeFetchedMessages(page.messages, roomID: roomID)
     } catch {
-      errorMessage = InstaChatSendFailure.actionMessage(for: error)
+      errorMessage = InstaChatSendFailure.actionMessage(for: error, language: configuration.language)
     }
     isLoadingMessages = false
   }
@@ -141,7 +141,7 @@ final class InstaChatStore: ObservableObject {
       let attachmentType = MimeTypeResolver.attachmentType(for: resolvedContentType)
       let localAttachment = InstaChatAttachment(
         id: "local-attachment-\(UUID().uuidString)",
-        fileName: fileURL.lastPathComponent.isEmpty ? "Attachment" : fileURL.lastPathComponent,
+        fileName: fileURL.lastPathComponent.isEmpty ? configuration.localizer.text("Attachment") : fileURL.lastPathComponent,
         contentType: resolvedContentType,
         type: attachmentType,
         fileSize: try? localFileURL.fileSize,
@@ -168,7 +168,8 @@ final class InstaChatStore: ObservableObject {
     } catch {
       errorMessage = InstaChatSendFailure.userFacing(
         for: error,
-        attachmentType: MimeTypeResolver.attachmentType(for: contentType ?? MimeTypeResolver.mimeType(for: fileURL))
+        attachmentType: MimeTypeResolver.attachmentType(for: contentType ?? MimeTypeResolver.mimeType(for: fileURL)),
+        language: configuration.language
       ).message
     }
   }
@@ -190,7 +191,7 @@ final class InstaChatStore: ObservableObject {
   }
 
   func reportError(_ error: Error) {
-    errorMessage = InstaChatSendFailure.actionMessage(for: error)
+    errorMessage = InstaChatSendFailure.actionMessage(for: error, language: configuration.language)
   }
 
   func dismissError() {
@@ -405,7 +406,7 @@ final class InstaChatStore: ObservableObject {
 
       resolvePendingMessage(messageID: messageID)
     } catch {
-      let failure = InstaChatSendFailure.userFacing(for: error, attachmentType: pending.payload.attachmentType)
+      let failure = InstaChatSendFailure.userFacing(for: error, attachmentType: pending.payload.attachmentType, language: configuration.language)
       pending.failure = failure
       pendingOutgoingByMessageID[messageID] = pending
       deliveryStatesByMessageID[messageID] = .failed(failure)
@@ -435,7 +436,7 @@ final class InstaChatStore: ObservableObject {
   private func restorePendingMessages() {
     for var pending in pendingStore.load() {
       let attachmentType = pending.payload.attachmentType
-      let failure = pending.failure ?? .interrupted(attachmentType: attachmentType)
+      let failure = pending.failure ?? .interrupted(attachmentType: attachmentType, language: configuration.language)
       pending.failure = failure
       pendingOutgoingByMessageID[pending.message.id] = pending
       deliveryStatesByMessageID[pending.message.id] = .failed(failure)
@@ -454,6 +455,8 @@ final class InstaChatStore: ObservableObject {
     let localRoomsByID = Dictionary(uniqueKeysWithValues: rooms.map { ($0.id, $0) })
     return fetchedRooms
       .map { fetchedRoom in
+        var fetchedRoom = fetchedRoom
+        fetchedRoom.subtitle = localizedRoomPreview(fetchedRoom.subtitle)
         guard let localRoom = localRoomsByID[fetchedRoom.id],
               let localUpdatedAt = localRoom.updatedAt,
               let fetchedUpdatedAt = fetchedRoom.updatedAt,
@@ -472,7 +475,7 @@ final class InstaChatStore: ObservableObject {
 
   private func updateRoomPreview(with message: InstaChatMessage, incrementsUnread: Bool) {
     updateRoom(id: message.roomID) { room in
-      room.subtitle = message.roomPreviewText
+      room.subtitle = message.roomPreviewText(language: configuration.language)
       room.updatedAt = message.createdAt
       if message.senderID == configuration.user.id {
         room.unreadCount = 0
@@ -489,7 +492,7 @@ final class InstaChatStore: ObservableObject {
     } else {
       var room = configuration.initialRoom?.id == roomID
         ? configuration.initialRoom!
-        : InstaChatRoom(id: roomID, title: configuration.roomTitle ?? "Chat")
+        : InstaChatRoom(id: roomID, title: configuration.roomTitle ?? configuration.localizer.text("Chat"))
       mutate(&room)
       updatedRooms.append(room)
     }
@@ -509,6 +512,16 @@ final class InstaChatStore: ObservableObject {
       return left.title.localizedCaseInsensitiveCompare(right.title) == .orderedAscending
     }
   }
+
+  private func localizedRoomPreview(_ preview: String?) -> String? {
+    guard let preview else { return nil }
+    switch preview {
+    case "Message", "Location", "Photo", "Video", "Voice note", "File", "Online":
+      return configuration.localizer.text(preview)
+    default:
+      return preview
+    }
+  }
 }
 
 extension InstaChatMessage {
@@ -520,16 +533,17 @@ extension InstaChatMessage {
     return [roomID, senderID, type.rawValue, content, attachmentKey, locationKey].joined(separator: "|")
   }
 
-  var roomPreviewText: String {
+  func roomPreviewText(language: InstaChatLanguage = .devicePreferred) -> String {
+    let strings = InstaChatLocalizer(language: language)
     switch type {
     case .text:
-      return content.isEmpty ? "Message" : content
+      return content.isEmpty ? strings.text("Message") : content
     case .image:
-      return InstaChatAttachmentType.image.roomPreviewText
+      return InstaChatAttachmentType.image.roomPreviewText(language: language)
     case .location:
-      return "Location"
+      return strings.text("Location")
     case .file:
-      return (attachment?.type ?? MimeTypeResolver.attachmentType(forFileName: content)).roomPreviewText
+      return (attachment?.type ?? MimeTypeResolver.attachmentType(forFileName: content)).roomPreviewText(language: language)
     }
   }
 }

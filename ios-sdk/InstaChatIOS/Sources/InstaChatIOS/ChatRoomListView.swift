@@ -5,18 +5,20 @@ struct ChatRoomListView: View {
   var onClose: (() -> Void)?
   var onProviderProfileTap: ((InstaChatRoom) -> Void)?
 
+  private var strings: InstaChatLocalizer { store.configuration.localizer }
+
   var body: some View {
     Group {
       if store.isLoadingRooms && store.rooms.isEmpty {
-        ProgressView("Loading chats")
+        ProgressView(strings.text("Loading chats"))
       } else if store.rooms.isEmpty {
         VStack(spacing: 10) {
           Image(systemName: "message")
             .font(.system(size: 42))
             .foregroundStyle(.secondary)
-          Text("No Chats")
+          Text(strings.text("No Chats"))
             .font(.headline)
-          Text("New conversations will appear here.")
+          Text(strings.text("New conversations will appear here."))
             .font(.subheadline)
             .foregroundStyle(.secondary)
         }
@@ -24,7 +26,7 @@ struct ChatRoomListView: View {
       } else {
         List(store.rooms) { room in
           NavigationLink(value: room) {
-            ChatRoomRow(room: room)
+            ChatRoomRow(room: room, strings: strings)
           }
         }
         #if os(iOS)
@@ -51,7 +53,7 @@ struct ChatRoomListView: View {
       ChatDetailView(room: room, onClose: onClose, onProviderProfileTap: onProviderProfileTap)
         .environmentObject(store)
     }
-    .alert("Unable to Load Chats", isPresented: Binding(
+    .alert(strings.text("Unable to Load Chats"), isPresented: Binding(
       get: { store.errorMessage != nil },
       set: { isPresented in
         if !isPresented {
@@ -59,7 +61,7 @@ struct ChatRoomListView: View {
         }
       }
     )) {
-      Button("OK", role: .cancel) {
+      Button(strings.text("OK"), role: .cancel) {
         store.dismissError()
       }
     } message: {
@@ -70,6 +72,9 @@ struct ChatRoomListView: View {
 
 struct SDKCloseButton: View {
   var action: () -> Void
+  var language: InstaChatLanguage = .devicePreferred
+
+  private var strings: InstaChatLocalizer { InstaChatLocalizer(language: language) }
 
   var body: some View {
     Button(action: action) {
@@ -77,12 +82,13 @@ struct SDKCloseButton: View {
         .font(.system(size: 12, weight: .semibold))
     }
     .buttonStyle(.bordered)
-    .accessibilityLabel("Close chat")
+    .accessibilityLabel(strings.text("Close chat"))
   }
 }
 
 private struct ChatRoomRow: View {
   var room: InstaChatRoom
+  var strings: InstaChatLocalizer
 
   var body: some View {
     HStack(spacing: 12) {
@@ -104,7 +110,7 @@ private struct ChatRoomRow: View {
           }
         }
 
-        Text(room.subtitle ?? "Tap to open conversation")
+        Text(room.subtitle ?? strings.text("Tap to open conversation"))
           .font(.subheadline)
           .foregroundStyle(.secondary)
           .lineLimit(1)
@@ -114,7 +120,7 @@ private struct ChatRoomRow: View {
         Circle()
           .fill(.red)
           .frame(width: 10, height: 10)
-          .accessibilityLabel("Unread messages")
+          .accessibilityLabel(strings.text("Unread messages"))
       }
     }
     .padding(.vertical, 6)

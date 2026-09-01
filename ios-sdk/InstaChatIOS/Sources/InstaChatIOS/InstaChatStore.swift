@@ -120,6 +120,16 @@ final class InstaChatStore: ObservableObject {
   }
 
   func sendLocation(_ location: InstaChatLocation, roomID: String) async {
+    guard !pendingOutgoingByMessageID.values.contains(where: { pending in
+      guard pending.message.roomID == roomID,
+            case let .location(pendingLocation) = pending.payload else {
+        return false
+      }
+      return pendingLocation == location
+    }) else {
+      return
+    }
+
     let optimisticMessage = InstaChatMessage(
       id: "local-\(UUID().uuidString)",
       roomID: roomID,
@@ -529,8 +539,11 @@ extension InstaChatMessage {
     let attachmentKey = attachment.map {
       [$0.type.rawValue, $0.fileName, $0.contentType].joined(separator: ":")
     } ?? ""
-    let locationKey = location.map { "\($0.latitude):\($0.longitude):\($0.name ?? "")" } ?? ""
-    return [roomID, senderID, type.rawValue, content, attachmentKey, locationKey].joined(separator: "|")
+    let locationKey = location.map {
+      String(format: "%.6f:%.6f", $0.latitude, $0.longitude)
+    } ?? ""
+    let normalizedContent = type == .location ? "" : content
+    return [roomID, senderID, type.rawValue, normalizedContent, attachmentKey, locationKey].joined(separator: "|")
   }
 
   func roomPreviewText(language: InstaChatLanguage = .devicePreferred) -> String {

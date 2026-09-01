@@ -292,6 +292,61 @@ final class InstaChatContractTests: XCTestCase {
     XCTAssertEqual(decoded.name, "Cairo")
   }
 
+  @MainActor
+  func testLocationBackendEchoReplacesLocalBubbleWhenPayloadFormattingDiffers() throws {
+    let store = InstaChatStore(
+      configuration: Self.testConfiguration(),
+      client: StubInstaChatClient(),
+      pendingStore: Self.temporaryPendingStore()
+    )
+    let createdAt = Self.date(1_000)
+    let location = InstaChatLocation(latitude: 30.0444, longitude: 31.2357, name: "Cairo")
+    store.append(Self.message(
+      id: "local-location",
+      roomID: "room-location",
+      content: #"{"latitude":30.0444,"longitude":31.2357,"name":"Cairo"}"#,
+      type: .location,
+      createdAt: createdAt,
+      location: location
+    ), replacingLocalEcho: false)
+
+    store.applyRealtimeEvent(.message(Self.message(
+      id: "backend-location",
+      roomID: "room-location",
+      content: #"{"name":"Cairo","longitude":31.2357,"latitude":30.0444}"#,
+      type: .location,
+      createdAt: createdAt.addingTimeInterval(1),
+      location: location
+    )))
+
+    XCTAssertEqual(store.messages(for: "room-location").map(\.id), ["backend-location"])
+  }
+
+  @MainActor
+  func testDuplicateLocationSendIsIgnoredWhileFirstRequestIsPending() async {
+    let client = StubInstaChatClient()
+    client.locationSendDelayNanoseconds = 100_000_000
+    let store = InstaChatStore(
+      configuration: Self.testConfiguration(),
+      client: client,
+      pendingStore: Self.temporaryPendingStore()
+    )
+    let location = InstaChatLocation(latitude: 30.0444, longitude: 31.2357, name: "Cairo")
+
+    let firstSend = Task { @MainActor in
+      await store.sendLocation(location, roomID: "room-location")
+    }
+    await Task.yield()
+    let duplicateSend = Task { @MainActor in
+      await store.sendLocation(location, roomID: "room-location")
+    }
+    await firstSend.value
+    await duplicateSend.value
+
+    XCTAssertEqual(client.sendLocationCallCount, 1)
+    XCTAssertEqual(store.messages(for: "room-location").count, 1)
+  }
+
   func testMapSelectionKeepsTheConfirmedCoordinate() {
     let location = makeSelectedMapLocation(latitude: 30.0444, longitude: 31.2357)
 
@@ -1453,6 +1508,8 @@ private final class StubInstaChatClient: InstaChatClientProtocol, @unchecked Sen
   var uploadResults: [Result<InstaChatAttachment, Error>] = []
   var attachmentSendResults: [Result<Void, Error>] = []
   private(set) var sendTextCallCount = 0
+  var locationSendDelayNanoseconds: UInt64 = 0
+  private(set) var sendLocationCallCount = 0
   private(set) var uploadCallCount = 0
   private(set) var sendAttachmentCallCount = 0
   private(set) var refreshRealtimeCallCount = 0
@@ -1486,7 +1543,12 @@ private final class StubInstaChatClient: InstaChatClientProtocol, @unchecked Sen
     try textResults.removeFirst().get()
   }
 
-  func sendLocation(_ location: InstaChatLocation, roomID: String) async throws {}
+  func sendLocation(_ location: InstaChatLocation, roomID: String) async throws {
+    sendLocationCallCount += 1
+    if locationSendDelayNanoseconds > 0 {
+      try await Task.sleep(nanoseconds: locationSendDelayNanoseconds)
+    }
+  }
 
   func sendAttachment(_ attachment: InstaChatAttachment, text: String, roomID: String) async throws {
     sendAttachmentCallCount += 1

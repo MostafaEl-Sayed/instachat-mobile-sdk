@@ -189,7 +189,7 @@ struct MapLocationPickerView: View {
   }
 
   private func sendSelectedLocation() {
-    guard hasSelection else {
+    guard hasSelection, !isResolving else {
       return
     }
     let coordinate = selectedCoordinate

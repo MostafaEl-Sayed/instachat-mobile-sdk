@@ -74,6 +74,20 @@ chat.ChatList(modifier = Modifier.fillMaxSize())
 chat.Chat(roomId = roomId, modifier = Modifier.fillMaxSize())
 ```
 
+To open the other participant's profile in the host app, pass `onUserProfileClick`. It receives that user's id (the host's external user id when the backend provides one) when the name in the chat header is tapped. Without it, the header name is not clickable.
+
+```kotlin
+chat.ChatList(
+  modifier = Modifier.fillMaxSize(),
+  onUserProfileClick = { userId -> navController.navigate("profile/$userId") },
+)
+chat.Chat(
+  roomId = roomId,
+  modifier = Modifier.fillMaxSize(),
+  onUserProfileClick = { userId -> navController.navigate("profile/$userId") },
+)
+```
+
 Java hosts use the same entry points:
 
 ```java
